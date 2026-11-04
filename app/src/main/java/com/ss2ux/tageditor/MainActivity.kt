@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -156,6 +157,7 @@ fun LibraryScreen() {
     var manualScanning by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var manualTick by remember { mutableIntStateOf(0) }
+    var openKey by remember { mutableStateOf<String?>(null) }   // 상세 화면으로 열린 앨범
     val gridState = rememberLazyGridState()
 
     // 기본은 Download, 설정에서 Music 추가
@@ -256,8 +258,7 @@ fun LibraryScreen() {
             ) {
                 items(filtered, key = { it.key }) { album ->
                     AlbumCard(album, isNew = album.addedAt >= newLimit) {
-                        // 3단계에서 앨범 상세 화면으로 연결할 자리
-                        Toast.makeText(ctx, "${album.name} (${album.tracks.size}곡)", Toast.LENGTH_SHORT).show()
+                        openKey = album.key
                     }
                 }
             }
@@ -286,6 +287,13 @@ fun LibraryScreen() {
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("닫기") } }
         )
+    }
+
+    // 앨범 상세 화면: 목록 위에 덮어서 표시 (닫으면 목록의 스크롤 위치/검색어가 그대로 남음)
+    val open = openKey?.let { k -> albums.find { it.key == k } }
+    if (open != null) {
+        BackHandler { openKey = null }
+        AlbumDetailScreen(open, onBack = { openKey = null })
     }
 }
 

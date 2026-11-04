@@ -15,7 +15,8 @@ data class Track(
     val uri: Uri,
     val title: String,
     val trackNo: Int,
-    val displayName: String   // 파일 이름 (예: 곡.mp3)
+    val displayName: String,  // 파일 이름 (예: 곡.mp3)
+    val durationMs: Long
 )
 
 data class Album(
@@ -51,7 +52,8 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
         MediaStore.Audio.Media.TRACK,
         MediaStore.Audio.Media.RELATIVE_PATH,
         MediaStore.Audio.Media.DISPLAY_NAME,
-        MediaStore.Audio.Media.DATE_ADDED
+        MediaStore.Audio.Media.DATE_ADDED,
+        MediaStore.Audio.Media.DURATION
     )
     val selection = folders.joinToString(" OR ") { "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?" }
     val args = folders.map { "$it/%" }.toTypedArray()
@@ -67,6 +69,7 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
         val iPath = c.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
         val iName = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
         val iAdded = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+        val iDur = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
         while (c.moveToNext()) {
             val path = c.getString(iPath) ?: continue
             val id = c.getLong(iId)
@@ -79,7 +82,8 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
                 uri = ContentUris.withAppendedId(collection, id),
                 title = c.getString(iTitle) ?: "(제목 없음)",
                 trackNo = trackNo,
-                displayName = c.getString(iName) ?: ""
+                displayName = c.getString(iName) ?: "",
+                durationMs = c.getLong(iDur)
             )
             // 폴더 단위 = 앨범. 단, Download 바로 아래에 낱개로 있는 파일들은
             // 한 앨범으로 뭉치지 않도록 앨범 태그로 다시 나눈다.
@@ -130,4 +134,30 @@ object ThumbCache {
         missing.add(album.key)
         null
     }
+}
+
+/** 상세 화면용 큰 앨범아트 (한 번에 몇 장만 캐시) */
+object LargeArt {
+    private val cache = LruCache<String, Bitmap>(3)
+
+    fun peek(key: String): Bitmap? = cache.get(key)
+
+    suspend fun load(context: Context, album: Album): Bitmap? = withContext(Dispatchers.IO) {
+        cache.get(album.key)?.let { return@withContext it }
+        for (t in album.tracks.take(5)) {
+            try {
+                val bmp = context.contentResolver.loadThumbnail(t.uri, Size(1000, 1000), null)
+                cache.put(album.key, bmp)
+                return@withContext bmp
+            } catch (e: Exception) {
+                // 이 곡에는 내장 앨범아트가 없음 -> 다음 곡 시도
+            }
+        }
+        null
+    }
+}
+
+fun formatTime(ms: Long): String {
+    val s = ms / 1000
+    return "%d:%02d".format(s / 60, s % 60)
 }
