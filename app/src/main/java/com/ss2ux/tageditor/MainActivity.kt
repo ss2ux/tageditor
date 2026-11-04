@@ -36,7 +36,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -65,6 +64,27 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.max
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -133,29 +153,39 @@ fun LibraryScreen() {
     var albums by remember { mutableStateOf<List<Album>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var loadMs by remember { mutableStateOf(-1L) }
-    var scanning by remember { mutableStateOf(false) }
+    var manualScanning by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var manualTick by remember { mutableIntStateOf(0) }
+    val gridState = rememberLazyGridState()
 
     // 기본은 Download, 설정에서 Music 추가
     val folders = remember(includeMusic) {
         buildSet { add("Download"); if (includeMusic) add("Music") }
     }
 
-    // 폴더 설정이 바뀌거나, 앱으로 돌아오거나, 새로고침을 누르면 실행
-    LaunchedEffect(folders, resumeTick.intValue, manualTick) {
-        // 1) 먼저 DB만 조회해서 즉시 화면에 표시 (여기가 0.1초 로딩)
+    // 목록을 DB에서 즉시 불러오고, scanFolders 안에서만 새 파일을 찾는다
+    suspend fun refresh(scanFolders: Set<String>) {
         val t0 = System.nanoTime()
         albums = withContext(Dispatchers.IO) { queryAlbums(ctx, folders) }
         loadMs = (System.nanoTime() - t0) / 1_000_000
 
-        // 2) 그 다음 백그라운드에서 방금 받은 새 파일이 있는지 확인
-        scanning = true
         val known = HashSet<String>()
         for (a in albums) for (t in a.tracks) known.add(a.path + t.displayName)
-        val found = withContext(Dispatchers.IO) { scanNewAudio(ctx, folders, known) }
+        val found = withContext(Dispatchers.IO) { scanNewAudio(ctx, scanFolders, known) }
         if (found > 0) albums = withContext(Dispatchers.IO) { queryAlbums(ctx, folders) }
-        scanning = false
+    }
+
+    // 자동: 폴더 설정이 바뀌거나 앱으로 돌아올 때. 새 파일은 Download 에만 생기므로 거기만 훑는다 (표시 없음)
+    LaunchedEffect(folders, resumeTick.intValue) {
+        refresh(setOf("Download"))
+    }
+    // 수동: 새로고침 버튼. 선택한 폴더 전체를 훑고, 버튼 자리에 작은 빙글이를 표시
+    LaunchedEffect(manualTick) {
+        if (manualTick > 0) {
+            manualScanning = true
+            refresh(folders)
+            manualScanning = false
+        }
     }
 
     // 앨범명만 검색 (메모리에서 걸러내므로 즉시 반응)
@@ -163,6 +193,9 @@ fun LibraryScreen() {
         val q = query.trim()
         if (q.isEmpty()) albums else albums.filter { it.name.contains(q, ignoreCase = true) }
     }
+    // 검색어가 바뀌면 맨 위로
+    LaunchedEffect(query) { gridState.scrollToItem(0) }
+
     val newLimit = System.currentTimeMillis() / 1000 - 3 * 24 * 3600
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -186,17 +219,18 @@ fun LibraryScreen() {
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)
             )
-            IconButton(onClick = { manualTick++ }) {
-                Icon(Icons.Default.Refresh, contentDescription = "새로고침")
+            IconButton(onClick = { if (!manualScanning) manualTick++ }) {
+                if (manualScanning) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = "새로고침")
+                }
             }
             IconButton(onClick = { showSettings = true }) {
                 Icon(Icons.Default.Settings, contentDescription = "설정")
             }
         }
 
-        if (scanning) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-        }
         val status = buildString {
             append("앨범 ${filtered.size}개")
             if (query.isNotBlank()) append(" (전체 ${albums.size}개 중)")
@@ -211,19 +245,23 @@ fun LibraryScreen() {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
         )
 
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(150.dp),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            items(filtered, key = { it.key }) { album ->
-                AlbumCard(album, isNew = album.addedAt >= newLimit) {
-                    // 3단계에서 앨범 상세 화면으로 연결할 자리
-                    Toast.makeText(ctx, "${album.name} (${album.tracks.size}곡)", Toast.LENGTH_SHORT).show()
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Adaptive(150.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 32.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items(filtered, key = { it.key }) { album ->
+                    AlbumCard(album, isNew = album.addedAt >= newLimit) {
+                        // 3단계에서 앨범 상세 화면으로 연결할 자리
+                        Toast.makeText(ctx, "${album.name} (${album.tracks.size}곡)", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
+            FastScrollbar(gridState, Modifier.align(Alignment.CenterEnd))
         }
     }
 
@@ -248,6 +286,80 @@ fun LibraryScreen() {
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("닫기") } }
         )
+    }
+}
+
+/** 오른쪽 가장자리를 잡고 끌어서 전체를 빠르게 이동하는 스크롤바 */
+@Composable
+fun FastScrollbar(state: LazyGridState, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var trackH by remember { mutableIntStateOf(0) }
+    var dragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+
+    val thumbH = with(density) { 56.dp.toPx() }
+    val total = state.layoutInfo.totalItemsCount
+    val visible = state.layoutInfo.visibleItemsInfo.size
+    val maxFirst = max(1, total - visible)
+    val natural = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
+    val fraction = if (dragging) dragFraction else natural
+    val travel = (trackH - thumbH).coerceAtLeast(1f)
+    val active = dragging || state.isScrollInProgress
+    val alpha by animateFloatAsState(if (active) 0.95f else 0.35f, label = "scrollbarAlpha")
+    val show = total > visible && total > 0
+
+    if (show) {
+        Box(
+            modifier = modifier
+                .fillMaxHeight()
+                .width(28.dp)
+                .onSizeChanged { trackH = it.height }
+                .pointerInput(total, visible, trackH) {
+                    fun move(y: Float) {
+                        val f = ((y - thumbH / 2f) / travel).coerceIn(0f, 1f)
+                        dragFraction = f
+                        scope.launch { state.scrollToItem((f * maxFirst).roundToInt()) }
+                    }
+                    detectVerticalDragGestures(
+                        onDragStart = { off -> dragging = true; move(off.y) },
+                        onDragEnd = { dragging = false },
+                        onDragCancel = { dragging = false },
+                        onVerticalDrag = { change, _ -> change.consume(); move(change.position.y) }
+                    )
+                }
+        ) {
+            val y = (fraction * travel).roundToInt()
+            // 손잡이
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset { IntOffset(0, y) }
+                    .padding(end = 4.dp)
+                    .width(8.dp)
+                    .size(width = 8.dp, height = 56.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
+            )
+            // 끄는 동안 현재 위치 표시
+            if (dragging) {
+                Text(
+                    "${state.firstVisibleItemIndex + 1} / $total",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset { IntOffset(0, y + 12.dp.roundToPx()) }
+                        .layout { measurable, _ ->
+                            val p = measurable.measure(Constraints())
+                            layout(0, p.height) { p.place(-p.width - 16.dp.roundToPx(), 0) }
+                        }
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
     }
 }
 
