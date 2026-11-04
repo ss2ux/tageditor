@@ -96,6 +96,20 @@ object Prefs {
     fun setIncludeMusic(c: Context, v: Boolean) = sp(c).edit().putBoolean("includeMusic", v).apply()
 }
 
+/**
+ * NEW 표시를 끄는 기록. 앨범을 수정(저장)하면 그 시각을 적어 두고,
+ * 앨범의 최근 추가 시각이 그보다 뒤일 때(= 그 뒤에 새 곡이 들어왔을 때)만 다시 NEW를 보여준다.
+ */
+object NewSeen {
+    val tick = mutableIntStateOf(0)   // 값이 바뀌면 목록이 NEW 표시를 다시 계산
+    private fun sp(c: Context) = c.getSharedPreferences("new_seen", Context.MODE_PRIVATE)
+    fun mark(c: Context, key: String) {
+        sp(c).edit().putLong(key, System.currentTimeMillis() / 1000).apply()
+        tick.intValue++
+    }
+    fun seenAt(c: Context, key: String): Long = sp(c).getLong(key, 0L)
+}
+
 // 앱으로 돌아올 때마다 올라가는 숫자 (목록을 자동으로 다시 불러오는 신호)
 private val resumeTick = mutableIntStateOf(0)
 
@@ -199,6 +213,7 @@ fun LibraryScreen() {
     LaunchedEffect(query) { gridState.scrollToItem(0) }
 
     val newLimit = System.currentTimeMillis() / 1000 - 3 * 24 * 3600
+    val newSeenTick = NewSeen.tick.intValue   // 수정 후 NEW가 바로 사라지도록 읽어 둠
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -257,7 +272,12 @@ fun LibraryScreen() {
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 items(filtered, key = { it.key }) { album ->
-                    AlbumCard(album, isNew = album.addedAt >= newLimit) {
+                    AlbumCard(
+                        album,
+                        isNew = newSeenTick >= 0 &&
+                            album.addedAt >= newLimit &&
+                            album.addedAt > NewSeen.seenAt(ctx, album.key)
+                    ) {
                         openKey = album.key
                     }
                 }

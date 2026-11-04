@@ -116,6 +116,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 else "${r.ok}곡 저장, ${r.failed.size}곡 실패\n" + r.failed.take(3).joinToString("\n")
                 Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                 if (r.ok > 0) {
+                    NewSeen.mark(ctx, album.key)   // 수정했으니 목록의 NEW 표시를 끔
                     RefreshBus.tick.intValue++   // 목록과 썸네일도 새로 읽게 함
                     tags = withContext(Dispatchers.IO) { AlbumTagLoader.load(ctx, album) }
                     LargeArt.load(ctx, album)?.let { art = it }
