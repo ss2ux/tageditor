@@ -63,6 +63,12 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
         LargeArt.load(ctx, album)?.let { art = it }
     }
 
+    // 4단계: 이 앨범의 mp3 파일에서 ID3 태그를 읽는다 (상세 화면을 열 때만)
+    var tags by remember(album.key, album.tracks) { mutableStateOf(AlbumTagLoader.peek(album)) }
+    LaunchedEffect(album.key, album.tracks) {
+        if (tags == null) tags = AlbumTagLoader.load(ctx, album)
+    }
+
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // 상단 바: 뒤로가기 / 수정 버튼
@@ -146,6 +152,60 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                         )
                     }
                 }
+                // 태그 정보 (트랙을 선택하면 그 트랙의 태그, 아니면 앨범 전체 요약)
+                item {
+                    val tg = tags
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .padding(bottom = 12.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        if (tg == null) {
+                            Text(
+                                "태그 읽는 중…",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (selected != null) {
+                            val x = tg.perTrack[selected.id]
+                            if (x == null) {
+                                Text("태그를 읽지 못했어요", fontSize = 13.sp)
+                            } else {
+                                InfoRow("제목", x.title)
+                                InfoRow(
+                                    "트랙번호",
+                                    if (x.trackNo <= 0) "" else if (x.trackTotal > 0) "${x.trackNo}/${x.trackTotal}" else "${x.trackNo}"
+                                )
+                                InfoRow("아티스트", x.artist)
+                                InfoRow("앨범 아티스트", x.albumArtist)
+                                InfoRow("앨범", x.album)
+                                InfoRow("연도", x.year)
+                                InfoRow("장르", x.genre)
+                                InfoRow("앨범아트", if (x.hasArt) "있음 (${x.artBytes / 1024}KB)" else "없음")
+                                InfoRow("태그 형식", x.format)
+                            }
+                        } else {
+                            InfoRow("앨범", tg.album.value, tg.album.mixed)
+                            InfoRow("아티스트", tg.artist.value, tg.artist.mixed)
+                            InfoRow("앨범 아티스트", tg.albumArtist.value, tg.albumArtist.mixed)
+                            InfoRow("연도", tg.year.value, tg.year.mixed)
+                            InfoRow("장르", tg.genre.value, tg.genre.mixed)
+                            InfoRow("앨범아트", "${tg.artCount}/${tg.total}곡에 있음", tg.artCount in 1 until tg.total)
+                        }
+                        if (tg != null) {
+                            Text(
+                                "태그 읽기 ${tg.elapsedMs}ms",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    }
+                }
                 // 트랙 목록
                 items(album.tracks, key = { it.id }) { t ->
                     val isSel = t.id == selectedId
@@ -184,6 +244,35 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 }
                 item { Box(modifier = Modifier.padding(bottom = 32.dp)) }
             }
+        }
+    }
+}
+
+/** 태그 정보 한 줄: 왼쪽 항목 이름, 오른쪽 값. mixed=true 면 "여러 값" 표시 */
+@Composable
+private fun InfoRow(label: String, value: String, mixed: Boolean = false) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            label,
+            modifier = Modifier.width(96.dp),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            if (value.isBlank()) "-" else value,
+            modifier = Modifier.weight(1f),
+            fontSize = 14.sp
+        )
+        if (mixed) {
+            Text(
+                "여러 값",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp)
+            )
         }
     }
 }
