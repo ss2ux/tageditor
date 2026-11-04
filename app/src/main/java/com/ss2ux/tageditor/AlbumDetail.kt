@@ -63,12 +63,17 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
         LargeArt.load(ctx, album)?.let { art = it }
     }
 
+    // 5단계: 수정 화면 (editTarget == null 이면 앨범 전체, 아니면 그 트랙만)
+    var editing by remember(album.key) { mutableStateOf(false) }
+    var editTarget by remember(album.key) { mutableStateOf<Track?>(null) }
+
     // 4단계: 이 앨범의 mp3 파일에서 ID3 태그를 읽는다 (상세 화면을 열 때만)
     var tags by remember(album.key, album.tracks) { mutableStateOf(AlbumTagLoader.peek(album)) }
     LaunchedEffect(album.key, album.tracks) {
         if (tags == null) tags = AlbumTagLoader.load(ctx, album)
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // 상단 바: 뒤로가기 / 수정 버튼
@@ -81,10 +86,12 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 }
                 Box(modifier = Modifier.weight(1f))
                 TextButton(onClick = {
-                    // 5단계에서 수정 창으로 연결할 자리
-                    val msg = if (selected == null) "앨범 전체 수정 (${album.tracks.size}곡)"
-                    else "트랙 수정: ${selected.title}"
-                    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                    if (tags == null) {
+                        Toast.makeText(ctx, "태그를 읽는 중이에요. 잠시 후 다시 눌러 주세요", Toast.LENGTH_SHORT).show()
+                    } else {
+                        editTarget = selected
+                        editing = true
+                    }
                 }) {
                     Icon(Icons.Default.Edit, contentDescription = null)
                     Text(
@@ -245,6 +252,27 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 item { Box(modifier = Modifier.padding(bottom = 32.dp)) }
             }
         }
+    }
+
+    // 수정 화면: 상세 화면 위에 전체 화면으로 덮는다
+    val tg = tags
+    if (editing && tg != null) {
+        EditScreen(
+            album = album,
+            tags = tg,
+            track = editTarget,
+            currentArt = art,
+            onClose = { editing = false },
+            onSave = { req ->
+                // 6단계에서 여기에 실제 태그 쓰기를 연결한다
+                Toast.makeText(
+                    ctx,
+                    "저장은 6단계에서 연결돼요 · 변경: ${req.changedNames().joinToString(", ")} (${req.trackIds.size}곡)",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        )
+    }
     }
 }
 
