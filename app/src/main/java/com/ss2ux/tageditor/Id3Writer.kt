@@ -88,7 +88,7 @@ object Id3Writer {
         }
         req.trackNo?.let { n ->
             drop("TRCK")
-            if (n > 0) {
+            if (n >= 0) {   // 0 은 "0번 트랙"으로 저장, 지우기는 음수
                 frames.add(textFrame("TRCK", if (ex.oldTotal > 0) "$n/${ex.oldTotal}" else "$n"))
             }
         }

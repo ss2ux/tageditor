@@ -27,7 +27,8 @@ data class Id3Tag(
     val disc: String = "",        // 예: "1/2"
     val hasArt: Boolean = false,  // 앨범아트(APIC) 포함 여부
     val artBytes: Int = 0,        // 앨범아트 프레임 크기(바이트)
-    val format: String = "없음"    // "ID3v2.3", "ID3v2.4", "ID3v1" 등
+    val format: String = "없음",   // "ID3v2.3", "ID3v2.4", "ID3v1" 등
+    val hasTrackNo: Boolean = false  // 트랙번호가 태그에 있는지 (0 도 "있음")
 )
 
 /**
@@ -309,7 +310,8 @@ object Id3Reader {
             disc = b.tpos,
             hasArt = b.hasArt,
             artBytes = b.artBytes,
-            format = b.format
+            format = b.format,
+            hasTrackNo = m != null || trackNo > 0
         )
     }
 

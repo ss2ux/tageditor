@@ -82,7 +82,7 @@ import java.time.YearMonth
  * 수정 화면에서 "저장"을 눌렀을 때 만들어지는 요청.
  * null 인 항목 = 바꾸지 않음 (6단계의 태그 쓰기가 이걸 받아서 처리한다).
  * year: "" = 지우기, "2026" 또는 "2026.11.04" 형식
- * trackNo: 0 = 지우기
+ * trackNo: 0 = 0번 트랙으로 저장, 음수(-1) = 지우기
  */
 data class EditRequest(
     val trackIds: List<Long>,
@@ -193,7 +193,7 @@ fun EditScreen(
     val rawTitle = tTag?.title ?: ""
     val iTitle = if (rawTitle.isBlank()) NameCleaner.clean(track?.displayName ?: "") else rawTitle
     val startTitle = if (rawTitle.isBlank()) iTitle else NameCleaner.clean(rawTitle)
-    val iTrackNo = if (tTag != null && tTag.trackNo > 0) tTag.trackNo.toString() else ""
+    val iTrackNo = if (tTag != null && tTag.hasTrackNo) tTag.trackNo.toString() else ""
     // 앨범명 기본값: 태그가 비어 있거나 곡마다 다르면 폴더명을 넣어 둔다
     val folderName = remember(album) {
         val p = album.path.trimEnd('/')
@@ -341,7 +341,7 @@ fun EditScreen(
                             EditRequest(
                                 trackIds = if (track != null) listOf(track.id) else album.tracks.map { it.id },
                                 title = if (cTitle) NameCleaner.clean(title) else null,
-                                trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: 0) else null,
+                                trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: -1) else null,
                                 album = if (cAlbum) albumText.trim() else null,
                                 artist = if (cArtist) artistText.trim() else null,
                                 albumArtist = if (cAlbumArtist) albumArtistText.trim() else null,
