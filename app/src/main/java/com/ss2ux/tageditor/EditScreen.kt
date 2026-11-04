@@ -50,7 +50,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -207,7 +206,7 @@ fun EditScreen(
     var titleTv by remember { mutableStateOf(TextFieldValue(startTitle, TextRange(0, startTitle.length))) }
     val title = titleTv.text
     val titleFocus = remember { FocusRequester() }
-    var titleRect by remember { mutableStateOf<Rect?>(null) }
+    var titleRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     val toolbar = LocalTextToolbar.current
     val clipboard = LocalClipboardManager.current
     LaunchedEffect(Unit) {
