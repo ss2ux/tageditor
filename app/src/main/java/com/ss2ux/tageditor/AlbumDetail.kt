@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +77,8 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     // 6단계: 저장 진행 상황 (null = 저장 중 아님), 권한 안내창
     var saveProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var showPermission by remember { mutableStateOf(false) }
+    // 7단계: 트랙번호 자동 배분 미리보기 창
+    var showNumbering by remember(album.key) { mutableStateOf(false) }
 
     // 5단계: 수정 화면 (editTarget == null 이면 앨범 전체, 아니면 그 트랙만)
     var editing by remember(album.key) { mutableStateOf(false) }
@@ -84,6 +88,36 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     var tags by remember(album.key, album.tracks) { mutableStateOf(AlbumTagLoader.peek(album)) }
     LaunchedEffect(album.key, album.tracks) {
         if (tags == null) tags = AlbumTagLoader.load(ctx, album)
+    }
+
+    // 저장 공통 처리: 권한 확인 -> 진행 표시 -> 저장 -> 화면/캐시 새로 읽기
+    fun startSave(total: Int, work: ((Int, Int) -> Unit) -> SaveResult) {
+        if (saveProgress != null) {
+            // 이미 저장 중
+        } else if (!TagSaver.hasAllFilesAccess()) {
+            showPermission = true
+        } else {
+            saveProgress = 0 to total
+            scope.launch {
+                val r = withContext(Dispatchers.IO) {
+                    work { done, all -> saveProgress = done to all }
+                }
+                // 옛 값/옛 이미지를 버리고 새로 읽는다
+                AlbumTagLoader.invalidate()
+                ThumbCache.clear()
+                LargeArt.clear()
+                saveProgress = null
+                if (r.ok > 0) editing = false
+                val msg = if (r.failed.isEmpty()) "${r.ok}곡 저장 완료"
+                else "${r.ok}곡 저장, ${r.failed.size}곡 실패\n" + r.failed.take(3).joinToString("\n")
+                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                if (r.ok > 0) {
+                    RefreshBus.tick.intValue++   // 목록과 썸네일도 새로 읽게 함
+                    tags = withContext(Dispatchers.IO) { AlbumTagLoader.load(ctx, album) }
+                    LargeArt.load(ctx, album)?.let { art = it }
+                }
+            }
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -98,6 +132,16 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                 }
                 Box(modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    if (album.tracks.isEmpty()) {
+                        Toast.makeText(ctx, "곡이 없어요", Toast.LENGTH_SHORT).show()
+                    } else {
+                        showNumbering = true
+                    }
+                }) {
+                    Icon(Icons.Default.FormatListNumbered, contentDescription = null)
+                    Text("  번호", fontSize = 15.sp)
+                }
                 TextButton(onClick = {
                     if (tags == null) {
                         Toast.makeText(ctx, "태그를 읽는 중이에요. 잠시 후 다시 눌러 주세요", Toast.LENGTH_SHORT).show()
@@ -277,32 +321,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
             currentArt = art,
             onClose = { editing = false },
             onSave = { req ->
-                if (saveProgress != null) {
-                    // 이미 저장 중
-                } else if (!TagSaver.hasAllFilesAccess()) {
-                    showPermission = true
-                } else {
-                    saveProgress = 0 to req.trackIds.size
-                    scope.launch {
-                        val r = withContext(Dispatchers.IO) {
-                            TagSaver.save(ctx, album, req) { done, total -> saveProgress = done to total }
-                        }
-                        // 옛 값/옛 이미지를 버리고 새로 읽는다
-                        AlbumTagLoader.invalidate()
-                        ThumbCache.clear()
-                        LargeArt.clear()
-                        saveProgress = null
-                        if (r.ok > 0) editing = false
-                        val msg = if (r.failed.isEmpty()) "${r.ok}곡 저장 완료"
-                        else "${r.ok}곡 저장, ${r.failed.size}곡 실패\n" + r.failed.take(3).joinToString("\n")
-                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
-                        if (r.ok > 0) {
-                            RefreshBus.tick.intValue++   // 목록과 썸네일도 새로 읽게 함
-                            tags = withContext(Dispatchers.IO) { AlbumTagLoader.load(ctx, album) }
-                            LargeArt.load(ctx, album)?.let { art = it }
-                        }
-                    }
-                }
+                startSave(req.trackIds.size) { p -> TagSaver.save(ctx, album, req, p) }
             }
         )
     }
@@ -328,6 +347,84 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 )
             }
         }
+    }
+
+    if (showNumbering) {
+        val plan = remember(album.tracks) { TrackNumbering.plan(album.tracks) }
+        val dups = remember(plan) { TrackNumbering.duplicates(plan) }
+        val guessedCount = plan.count { it.guessed }
+        AlertDialog(
+            onDismissRequest = { showNumbering = false },
+            title = { Text("트랙번호 자동 배분") },
+            text = {
+                Column {
+                    Text(
+                        "파일명 앞의 숫자로 트랙번호를 정해요. 트랙명(제목)은 바꾸지 않아요.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (guessedCount > 0) {
+                        Text(
+                            "※ ${guessedCount}곡은 파일명에서 번호를 못 읽어서 목록 순서대로 빈 번호를 줬어요 (표시: 순서)",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    if (dups.isNotEmpty()) {
+                        Text(
+                            "※ 같은 번호가 겹쳐요: " + dups.joinToString(", "),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    LazyColumn(modifier = Modifier.heightIn(max = 340.dp).padding(top = 8.dp)) {
+                        items(plan) { row ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    row.track.displayName,
+                                    modifier = Modifier.weight(1f),
+                                    fontSize = 13.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    (if (row.guessed) "순서 " else "") + "→ " + row.number,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (row.guessed) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showNumbering = false
+                    // 이미 같은 번호인 곡은 건드리지 않는다
+                    val cur = tags
+                    val map = HashMap<Long, Int>()
+                    for (row in plan) {
+                        if (cur?.perTrack?.get(row.track.id)?.trackNo != row.number) map[row.track.id] = row.number
+                    }
+                    if (map.isEmpty()) {
+                        Toast.makeText(ctx, "이미 번호가 모두 맞아요", Toast.LENGTH_SHORT).show()
+                    } else {
+                        startSave(map.size) { p -> TrackNumbering.save(ctx, album, map, p) }
+                    }
+                }) { Text("적용") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNumbering = false }) { Text("취소") }
+            }
+        )
     }
 
     if (showPermission) {
