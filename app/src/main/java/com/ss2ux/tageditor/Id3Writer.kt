@@ -93,15 +93,20 @@ object Id3Writer {
             }
         }
 
+        // 연도: 플레이어마다 읽는 프레임이 달라서 TDRC(v2.4) + TYER + TDAT(v2.3) 를 모두 써 둔다
         val y = req.year
-        if (y != null) {
-            // 새 연도: 예전 날짜 프레임을 전부 지우고 TDRC 하나로 ("2026.11.04" -> "2026-11-04")
+        val iso: String? = when {
+            y != null -> y.replace('.', '-')                 // "" 이면 지우기
+            ex.oldYear.isNotEmpty() -> ex.oldYear            // 옛 v2.3 (TYER+TDAT)
+            frames.none { it.id == "TYER" } ->               // v2.4 인데 TYER 가 없으면 TDRC 에서 만들어 준다
+                frames.firstOrNull { it.id == "TDRC" && it.flags == 0 }
+                    ?.let { decodeText(it.data).take(10) }
+                    ?.takeIf { YEAR_RE.matches(it) }
+            else -> null
+        }
+        if (y != null || iso != null) {
             drop("TDRC", "TYER", "TDAT", "TIME", "TRDA")
-            if (y.isNotEmpty()) frames.add(textFrame("TDRC", y.replace('.', '-')))
-        } else if (ex.oldYear.isNotEmpty()) {
-            // 연도는 안 바꾸지만, 옛 v2.3 형식(TYER+TDAT)이었다면 TDRC 로 옮겨 둔다
-            drop("TDRC")
-            frames.add(textFrame("TDRC", ex.oldYear))
+            if (!iso.isNullOrEmpty()) frames.addAll(yearFrames(iso))
         }
 
         req.artJpeg?.let { jpeg ->
@@ -307,6 +312,20 @@ object Id3Writer {
             byteArrayOf(1, 0xFF.toByte(), 0xFE.toByte()) + text.toByteArray(Charsets.UTF_16LE)
         }
         return Frame(id, 0, data)
+    }
+
+    private val YEAR_RE = Regex("""^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$""")
+
+    /** "2026" 또는 "2026-11-04" -> TDRC + TYER (+ TDAT "DDMM") */
+    private fun yearFrames(iso: String): List<Frame> {
+        val list = ArrayList<Frame>()
+        list.add(textFrame("TDRC", iso))
+        val m = YEAR_RE.find(iso) ?: return list
+        list.add(textFrame("TYER", m.groupValues[1]))
+        val mm = m.groupValues[2]
+        val dd = m.groupValues[3]
+        if (mm.isNotEmpty() && dd.isNotEmpty()) list.add(textFrame("TDAT", dd + mm))
+        return list
     }
 
     /** 앞면 커버(type 3) JPEG */
