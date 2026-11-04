@@ -178,7 +178,7 @@ fun LibraryScreen() {
     }
 
     // 자동: 폴더 설정이 바뀌거나 앱으로 돌아올 때. 새 파일은 Download 에만 생기므로 거기만 훑는다 (표시 없음)
-    LaunchedEffect(folders, resumeTick.intValue) {
+    LaunchedEffect(folders, resumeTick.intValue, RefreshBus.tick.intValue) {
         refresh(setOf("Download"))
     }
     // 수동: 새로고침 버튼. 선택한 폴더 전체를 훑고, 버튼 자리에 작은 빙글이를 표시
@@ -374,9 +374,9 @@ fun FastScrollbar(state: LazyGridState, modifier: Modifier = Modifier) {
 @Composable
 fun AlbumCard(album: Album, isNew: Boolean, onClick: () -> Unit) {
     val ctx = LocalContext.current
-    var bmp by remember(album.key) { mutableStateOf(ThumbCache.peek(album.key)) }
+    var bmp by remember(album.key, RefreshBus.tick.intValue) { mutableStateOf(ThumbCache.peek(album.key)) }
     // 화면에 보이는 앨범만 썸네일을 읽음 (스크롤로 사라지면 자동 취소)
-    LaunchedEffect(album.key) { if (bmp == null) bmp = ThumbCache.load(ctx, album) }
+    LaunchedEffect(album.key, RefreshBus.tick.intValue) { if (bmp == null) bmp = ThumbCache.load(ctx, album) }
 
     Column(modifier = Modifier.clickable(onClick = onClick)) {
         Box(

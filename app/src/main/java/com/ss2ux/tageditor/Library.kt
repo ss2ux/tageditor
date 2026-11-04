@@ -119,6 +119,12 @@ object ThumbCache {
 
     fun peek(key: String): Bitmap? = cache.get(key)
 
+    /** 태그/앨범아트를 저장한 뒤 옛 썸네일을 버린다 */
+    fun clear() {
+        cache.evictAll()
+        missing.clear()
+    }
+
     suspend fun load(context: Context, album: Album): Bitmap? = withContext(Dispatchers.IO) {
         cache.get(album.key)?.let { return@withContext it }
         if (album.key in missing) return@withContext null
@@ -141,6 +147,8 @@ object LargeArt {
     private val cache = LruCache<String, Bitmap>(3)
 
     fun peek(key: String): Bitmap? = cache.get(key)
+
+    fun clear() = cache.evictAll()
 
     suspend fun load(context: Context, album: Album): Bitmap? = withContext(Dispatchers.IO) {
         cache.get(album.key)?.let { return@withContext it }

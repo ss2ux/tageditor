@@ -1,6 +1,14 @@
 package com.ss2ux.tageditor
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -62,6 +70,11 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     LaunchedEffect(album.key) {
         LargeArt.load(ctx, album)?.let { art = it }
     }
+
+    val scope = rememberCoroutineScope()
+    // 6단계: 저장 진행 상황 (null = 저장 중 아님), 권한 안내창
+    var saveProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var showPermission by remember { mutableStateOf(false) }
 
     // 5단계: 수정 화면 (editTarget == null 이면 앨범 전체, 아니면 그 트랙만)
     var editing by remember(album.key) { mutableStateOf(false) }
@@ -264,12 +277,77 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
             currentArt = art,
             onClose = { editing = false },
             onSave = { req ->
-                // 6단계에서 여기에 실제 태그 쓰기를 연결한다
-                Toast.makeText(
-                    ctx,
-                    "저장은 6단계에서 연결돼요 · 변경: ${req.changedNames().joinToString(", ")} (${req.trackIds.size}곡)",
-                    Toast.LENGTH_LONG
-                ).show()
+                if (saveProgress != null) {
+                    // 이미 저장 중
+                } else if (!TagSaver.hasAllFilesAccess()) {
+                    showPermission = true
+                } else {
+                    saveProgress = 0 to req.trackIds.size
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) {
+                            TagSaver.save(ctx, album, req) { done, total -> saveProgress = done to total }
+                        }
+                        // 옛 값/옛 이미지를 버리고 새로 읽는다
+                        AlbumTagLoader.invalidate()
+                        ThumbCache.clear()
+                        LargeArt.clear()
+                        saveProgress = null
+                        if (r.ok > 0) editing = false
+                        val msg = if (r.failed.isEmpty()) "${r.ok}곡 저장 완료"
+                        else "${r.ok}곡 저장, ${r.failed.size}곡 실패\n" + r.failed.take(3).joinToString("\n")
+                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                        if (r.ok > 0) {
+                            RefreshBus.tick.intValue++   // 목록과 썸네일도 새로 읽게 함
+                            tags = withContext(Dispatchers.IO) { AlbumTagLoader.load(ctx, album) }
+                            LargeArt.load(ctx, album)?.let { art = it }
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // 저장 중에는 화면을 덮고 뒤로가기도 막는다
+    val sp = saveProgress
+    if (sp != null) {
+        BackHandler { }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x99000000))
+                .clickable(enabled = true, onClick = { }),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Text(
+                    "저장 중 ${sp.first} / ${sp.second}",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
+        }
+    }
+
+    if (showPermission) {
+        AlertDialog(
+            onDismissRequest = { showPermission = false },
+            title = { Text("파일 수정 권한이 필요해요") },
+            text = {
+                Text(
+                    "mp3 파일에 태그를 쓰려면 \"모든 파일 액세스\" 권한이 필요해요.\n\n" +
+                        "‘설정 열기’를 누른 뒤 Tag Editor를 켜고, 앱으로 돌아와서 저장을 다시 눌러 주세요."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermission = false
+                    TagSaver.openAllFilesSettings(ctx)
+                }) { Text("설정 열기") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermission = false }) { Text("취소") }
             }
         )
     }
