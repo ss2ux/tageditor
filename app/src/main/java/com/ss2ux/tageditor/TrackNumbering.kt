@@ -11,18 +11,21 @@ import java.util.concurrent.TimeUnit
 /**
  * 7단계: 파일명 맨 앞의 숫자로 트랙번호를 알아내는 도구.
  * - 접두어(tr, track, 트랙, t)가 있으면 뒤에 숫자만 와도 인식: track1, 트랙 2, t3
+ * - 1a, 1B, 1c 처럼 숫자 뒤에 영문 한 글자가 붙은 것도 그 숫자(1)로 인식
  * - 접두어가 없으면 숫자 뒤에 _ - . 가 있거나 숫자만 있어야 인식: 01_, 1-, 1
  *   (곡 제목이 "1999" 처럼 숫자로 시작하는 경우를 트랙번호로 오인하지 않기 위함)
  * 트랙명(제목 태그)은 절대 바꾸지 않고, 트랙번호만 쓴다.
  */
 object TrackNumbering {
     private val withPrefix =
-        Regex("""^(?:tr(?:ack)?|트랙|t)\s*0*(\d{1,3})(?=[\s_\-.]|$)""", RegexOption.IGNORE_CASE)
+        Regex("""^(?:tr(?:ack)?|트랙|t)\s*0*(\d{1,3})[A-Za-z]?(?=[\s_\-.]|$)""", RegexOption.IGNORE_CASE)
     private val plainNumber = Regex("""^0*(\d{1,3})(?:[_\-.]|$)""")
+    // 1a, 1B, 02c 처럼 숫자 바로 뒤에 영문 한 글자: 모두 그 숫자 트랙으로 본다 (뒤에는 공백/_/-/. 또는 끝)
+    private val numberLetter = Regex("""^0*(\d{1,3})[A-Za-z](?=[\s_\-.]|$)""")
 
     fun parse(fileName: String): Int? {
         val name = fileName.substringBeforeLast('.').trim()
-        val m = withPrefix.find(name) ?: plainNumber.find(name) ?: return null
+        val m = withPrefix.find(name) ?: plainNumber.find(name) ?: numberLetter.find(name) ?: return null
         return m.groupValues[1].toIntOrNull()?.takeIf { it > 0 }
     }
 
