@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,11 +50,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
@@ -66,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -200,6 +207,9 @@ fun EditScreen(
     var titleTv by remember { mutableStateOf(TextFieldValue(startTitle, TextRange(0, startTitle.length))) }
     val title = titleTv.text
     val titleFocus = remember { FocusRequester() }
+    var titleRect by remember { mutableStateOf<Rect?>(null) }
+    val toolbar = LocalTextToolbar.current
+    val clipboard = LocalClipboardManager.current
     LaunchedEffect(Unit) {
         if (trackMode) {
             try {
@@ -207,7 +217,44 @@ fun EditScreen(
             } catch (e: Exception) {
                 // 포커스를 못 줘도 직접 눌러서 편집 가능
             }
+            // 열리자마자 잘라내기/복사/붙여넣기 메뉴도 같이 띄운다
+            delay(350)
+            val r = titleRect
+            if (r != null) {
+                toolbar.showMenu(
+                    rect = r,
+                    onCopyRequested = {
+                        val t = titleTv
+                        if (!t.selection.collapsed) {
+                            clipboard.setText(AnnotatedString(t.text.substring(t.selection.min, t.selection.max)))
+                        }
+                        toolbar.hide()
+                    },
+                    onPasteRequested = {
+                        val t = titleTv
+                        val clip = (clipboard.getText()?.text ?: "").replace('\n', ' ')
+                        val nt = t.text.substring(0, t.selection.min) + clip + t.text.substring(t.selection.max)
+                        titleTv = TextFieldValue(nt, TextRange(t.selection.min + clip.length))
+                        toolbar.hide()
+                    },
+                    onCutRequested = {
+                        val t = titleTv
+                        if (!t.selection.collapsed) {
+                            clipboard.setText(AnnotatedString(t.text.substring(t.selection.min, t.selection.max)))
+                            titleTv = TextFieldValue(t.text.removeRange(t.selection.min, t.selection.max), TextRange(t.selection.min))
+                        }
+                        toolbar.hide()
+                    },
+                    onSelectAllRequested = {
+                        titleTv = titleTv.copy(selection = TextRange(0, titleTv.text.length))
+                        toolbar.hide()
+                    }
+                )
+            }
         }
+    }
+    DisposableEffect(Unit) {
+        onDispose { toolbar.hide() }
     }
     var trackNoText by remember { mutableStateOf(iTrackNo) }
     var albumText by remember { mutableStateOf(iAlbum) }
@@ -380,10 +427,17 @@ fun EditScreen(
                 if (trackMode) {
                     OutlinedTextField(
                         value = titleTv,
-                        onValueChange = { titleTv = it },
+                        onValueChange = {
+                            if (it.text != titleTv.text) toolbar.hide()
+                            titleTv = it
+                        },
                         label = { Text("트랙명") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).focusRequester(titleFocus)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .onGloballyPositioned { titleRect = it.boundsInRoot() }
+                            .focusRequester(titleFocus)
                     )
                     EditField(
                         "트랙번호", trackNoText,
