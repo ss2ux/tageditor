@@ -138,51 +138,6 @@ private fun formatYear(d: String): String =
     if (d.length == 8) "${d.substring(0, 4)}.${d.substring(4, 6)}.${d.substring(6, 8)}" else d
 
 // ----------------------------------------------------------------------
-// 앨범아트: 고른 이미지를 중앙 기준 정사각형으로 잘라 1500x1500 JPEG로 만든다
-// ----------------------------------------------------------------------
-
-class NewArt(val bitmap: Bitmap, val jpeg: ByteArray)
-
-object ArtProcessor {
-    const val SIZE = 1500
-
-    /** 시간이 걸리므로 반드시 백그라운드에서 호출. 실패하면 null */
-    fun fromUri(context: Context, uri: Uri): NewArt? {
-        return try {
-            val source = ImageDecoder.createSource(context.contentResolver, uri)
-            val decoded = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                // 짧은 변이 1500 이상으로 남도록, 너무 큰 사진은 미리 줄여서 읽음 (메모리 절약)
-                val s = minOf(info.size.width, info.size.height) / SIZE
-                if (s > 1) decoder.setTargetSampleSize(s)
-            }
-            val w = decoded.width
-            val h = decoded.height
-            val side = minOf(w, h)
-            val left = (w - side) / 2
-            val top = (h - side) / 2
-
-            val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(out)
-            canvas.drawColor(android.graphics.Color.WHITE)   // 투명 PNG는 흰 배경 위에
-            canvas.drawBitmap(
-                decoded,
-                Rect(left, top, left + side, top + side),
-                Rect(0, 0, SIZE, SIZE),
-                Paint(Paint.FILTER_BITMAP_FLAG)
-            )
-            decoded.recycle()
-
-            val bos = ByteArrayOutputStream()
-            out.compress(Bitmap.CompressFormat.JPEG, 92, bos)
-            NewArt(out, bos.toByteArray())
-        } catch (e: Exception) {
-            null
-        }
-    }
-}
-
-// ----------------------------------------------------------------------
 // 수정 화면 (전체 화면)
 // ----------------------------------------------------------------------
 
@@ -209,7 +164,15 @@ fun EditScreen(
     // 시작값
     val iTitle = tTag?.title ?: ""
     val iTrackNo = if (tTag != null && tTag.trackNo > 0) tTag.trackNo.toString() else ""
-    val iAlbum = if (trackMode) (tTag?.album ?: "") else if (tags.album.mixed) "" else tags.album.value
+    // 앨범명 기본값: 태그가 비어 있거나 곡마다 다르면 폴더명을 넣어 둔다
+    val folderName = remember(album) {
+        val p = album.path.trimEnd('/')
+        if ('/' !in p) "" else p.substringAfterLast('/')   // Download/Music 바로 아래 낱개 곡은 폴더명 없음
+    }
+    val iAlbum = if (trackMode) (tTag?.album ?: "") else {
+        val base = if (tags.album.mixed) "" else tags.album.value
+        if (base.isBlank()) folderName else base
+    }
     val iArtist = if (trackMode) (tTag?.artist ?: "") else if (tags.artist.mixed) "" else tags.artist.value
     val iAlbumArtist =
         if (trackMode) (tTag?.albumArtist ?: "") else if (tags.albumArtist.mixed) "" else tags.albumArtist.value
@@ -217,7 +180,7 @@ fun EditScreen(
     val iYear = (if (trackMode) (tTag?.year ?: "") else if (tags.year.mixed) "" else tags.year.value)
         .filter { it.isDigit() }.take(8)
 
-    val mAlbum = !trackMode && tags.album.mixed
+    val mAlbum = !trackMode && tags.album.mixed && iAlbum.isBlank()
     val mArtist = !trackMode && tags.artist.mixed
     val mAlbumArtist = !trackMode && tags.albumArtist.mixed
     val mGenre = !trackMode && tags.genre.mixed
@@ -236,14 +199,21 @@ fun EditScreen(
     var artBusy by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
 
+    // 확정된 원본/영역 (다시 조정할 때 사용) 과, 지금 조정 화면에 올라가 있는 것
+    var srcBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var srcCrop by remember { mutableStateOf<CropRect?>(null) }
+    var pendingBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var pendingCrop by remember { mutableStateOf<CropRect?>(null) }
+
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             artBusy = true
             scope.launch {
-                val r = withContext(Dispatchers.IO) { ArtProcessor.fromUri(ctx, uri) }
+                val bmp = withContext(Dispatchers.IO) { ArtProcessor.decode(ctx, uri) }
                 artBusy = false
-                if (r != null) {
-                    newArt = r
+                if (bmp != null) {
+                    pendingBitmap = bmp
+                    pendingCrop = ArtProcessor.initialCrop(bmp)
                 } else {
                     Toast.makeText(ctx, "이미지를 읽지 못했어요", Toast.LENGTH_SHORT).show()
                 }
@@ -263,8 +233,9 @@ fun EditScreen(
     val anyChange = cTitle || cTrackNo || cAlbum || cArtist || cAlbumArtist || cGenre || cYear || newArt != null
     val canSave = anyChange && yearOk && !artBusy
 
-    BackHandler { if (anyChange) confirmDiscard = true else onClose() }
+    BackHandler(enabled = pendingBitmap == null) { if (anyChange) confirmDiscard = true else onClose() }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().imePadding()) {
             // 상단 바
@@ -367,10 +338,21 @@ fun EditScreen(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
                 if (na != null) {
-                    TextButton(
-                        onClick = { newArt = null },
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    ) { Text("선택 취소") }
+                    Row(modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        TextButton(onClick = {
+                            val sb = srcBitmap
+                            val sc = srcCrop
+                            if (sb != null && sc != null) {
+                                pendingBitmap = sb
+                                pendingCrop = sc
+                            }
+                        }) { Text("위치·확대 조정") }
+                        TextButton(onClick = {
+                            newArt = null
+                            srcBitmap = null
+                            srcCrop = null
+                        }) { Text("선택 취소") }
+                    }
                 }
 
                 // 입력칸
@@ -383,6 +365,12 @@ fun EditScreen(
                     )
                 }
                 EditField("앨범", albumText, { albumText = it }, mAlbum)
+                if (!trackMode && folderName.isNotBlank() && albumText != folderName) {
+                    TextButton(
+                        onClick = { albumText = folderName },
+                        modifier = Modifier.align(Alignment.End)
+                    ) { Text("폴더명으로: $folderName", maxLines = 1) }
+                }
                 EditField("아티스트", artistText, { artistText = it }, mArtist)
                 EditField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
 
@@ -410,6 +398,34 @@ fun EditScreen(
                 Box(modifier = Modifier.padding(bottom = 96.dp))
             }
         }
+    }
+
+
+    val pb = pendingBitmap
+    val pc = pendingCrop
+    if (pb != null && pc != null) {
+        ArtCropScreen(
+            source = pb,
+            initial = pc,
+            onCancel = { pendingBitmap = null; pendingCrop = null },
+            onConfirm = { crop ->
+                pendingBitmap = null
+                pendingCrop = null
+                artBusy = true
+                scope.launch {
+                    val r = withContext(Dispatchers.Default) { ArtProcessor.render(pb, crop) }
+                    artBusy = false
+                    if (r != null) {
+                        newArt = r
+                        srcBitmap = pb
+                        srcCrop = crop
+                    } else {
+                        Toast.makeText(ctx, "앨범아트를 만들지 못했어요", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
     }
 
     if (confirmDiscard) {
