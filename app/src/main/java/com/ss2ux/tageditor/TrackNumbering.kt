@@ -26,7 +26,7 @@ object TrackNumbering {
     fun parse(fileName: String): Int? {
         val name = fileName.substringBeforeLast('.').trim()
         val m = withPrefix.find(name) ?: plainNumber.find(name) ?: numberLetter.find(name) ?: return null
-        return m.groupValues[1].toIntOrNull()?.takeIf { it > 0 }
+        return m.groupValues[1].toIntOrNull()?.takeIf { it >= 0 }
     }
 
     /** 미리보기 한 줄. guessed = 파일명에서 못 읽어서 순서대로 매긴 번호 */
@@ -37,6 +37,7 @@ object TrackNumbering {
         val parsed = tracks.map { parse(it.displayName) }
         val used = HashSet<Int>()
         for (p in parsed) if (p != null) used.add(p)
+        // 0번(0, tr0, 0_ 등)은 번호 없음으로 둔다: 빈 번호를 채우지 않고 그대로 0
         var next = 1
         val out = ArrayList<Item>(tracks.size)
         for (i in tracks.indices) {
@@ -54,7 +55,7 @@ object TrackNumbering {
 
     /** 같은 번호를 가진 곡이 둘 이상이면 그 번호들 (예: CD1/CD2 를 합친 폴더) */
     fun duplicates(items: List<Item>): List<Int> =
-        items.groupBy { it.number }.filter { it.value.size > 1 }.keys.sorted()
+        items.filter { it.number > 0 }.groupBy { it.number }.filter { it.value.size > 1 }.keys.sorted()
 
     /** 곡마다 다른 번호를 쓴다. 번호(TRCK)만 바꾸고 나머지 태그는 그대로. 반드시 백그라운드에서 호출. */
     fun save(

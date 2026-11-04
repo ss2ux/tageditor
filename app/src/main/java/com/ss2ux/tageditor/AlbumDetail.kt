@@ -267,7 +267,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                                 InfoRow("제목", x.title)
                                 InfoRow(
                                     "트랙번호",
-                                    if (x.trackNo <= 0) "" else if (x.trackTotal > 0) "${x.trackNo}/${x.trackTotal}" else "${x.trackNo}"
+                                    if (!x.hasTrackNo) "" else if (x.trackTotal > 0) "${x.trackNo}/${x.trackTotal}" else "${x.trackNo}"
                                 )
                                 InfoRow("아티스트", x.artist)
                                 InfoRow("앨범 아티스트", x.albumArtist)
@@ -418,7 +418,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    (if (row.guessed) "순서 " else "") + "→ " + row.number,
+                                    (if (row.guessed) "순서 " else "") + "→ " + (if (row.number == 0) "-" else row.number.toString()),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (row.guessed) MaterialTheme.colorScheme.primary
