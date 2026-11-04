@@ -22,7 +22,7 @@ data class Track(
 data class Album(
     val key: String,        // 목록에서 앨범을 구분하는 값
     val path: String,       // MediaStore RELATIVE_PATH (예: Download/앨범폴더/)
-    val name: String,       // 앨범명 (태그 기준, 없으면 폴더 이름)
+    val name: String,       // 앨범명 (폴더 이름 기준. Download/Music 바로 아래 낱개 곡만 앨범 태그 기준)
     val artist: String,     // 가장 많은 곡의 아티스트
     val addedAt: Long,      // 가장 최근 추가된 곡의 추가 시각(초)
     val tracks: List<Track>
@@ -80,7 +80,7 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
             val track = Track(
                 id = id,
                 uri = ContentUris.withAppendedId(collection, id),
-                title = c.getString(iTitle) ?: "(제목 없음)",
+                title = NameCleaner.clean(c.getString(iTitle) ?: "").ifBlank { "(제목 없음)" },
                 trackNo = trackNo,
                 displayName = c.getString(iName) ?: "",
                 durationMs = c.getLong(iDur)
@@ -99,8 +99,11 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
         val folderName = path.trimEnd('/').substringAfterLast('/')
         val tracks = rows.map { it.track }
             .sortedWith(compareBy<Track>({ it.trackNo }, { it.displayName.lowercase() }))
-        val albumName = mostCommon(rows.map { it.album }.filter { it !in folders })
-            ?: folderName
+        // 목록의 앨범명 = 폴더명. 단, Download/Music 바로 아래 낱개 곡들은 폴더명이
+        // "Download" 같은 이름이라 의미가 없으므로 앨범 태그(없으면 폴더명)를 쓴다.
+        val isRootGroup = path.trimEnd('/') in folders
+        val tagAlbum = mostCommon(rows.map { it.album }.filter { it !in folders })
+        val albumName = if (isRootGroup) (tagAlbum ?: folderName) else folderName
         Album(
             key = key,
             path = path,
@@ -168,4 +171,18 @@ object LargeArt {
 fun formatTime(ms: Long): String {
     val s = ms / 1000
     return "%d:%02d".format(s / 60, s % 60)
+}
+
+/**
+ * 삭제문구: 여기 적힌 문구는 트랙명에 남기지 않는다 (대소문자 구분 없음).
+ * 문구를 더 지우고 싶으면 deletePhrases 에 추가하면 된다.
+ */
+object NameCleaner {
+    val deletePhrases = listOf(".mp3")
+
+    fun clean(s: String): String {
+        var r = s
+        for (p in deletePhrases) r = r.replace(p, "", ignoreCase = true)
+        return r.trim()
+    }
 }

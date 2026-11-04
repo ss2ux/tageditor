@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,13 +48,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
@@ -162,7 +167,11 @@ fun EditScreen(
     val tTag = track?.let { tags.perTrack[it.id] }
 
     // 시작값
-    val iTitle = tTag?.title ?: ""
+    // 트랙명: 태그에 제목이 있으면 그 값, 없으면 파일명(삭제문구 .mp3 제외)을 그대로 보여준다.
+    // 비교 기준(iTitle)은 처음 보여준 값이라, 건드리지 않으면 트랙명 태그는 바뀌지 않는다.
+    val rawTitle = tTag?.title ?: ""
+    val iTitle = if (rawTitle.isBlank()) NameCleaner.clean(track?.displayName ?: "") else rawTitle
+    val startTitle = if (rawTitle.isBlank()) iTitle else NameCleaner.clean(rawTitle)
     val iTrackNo = if (tTag != null && tTag.trackNo > 0) tTag.trackNo.toString() else ""
     // 앨범명 기본값: 태그가 비어 있거나 곡마다 다르면 폴더명을 넣어 둔다
     val folderName = remember(album) {
@@ -187,7 +196,19 @@ fun EditScreen(
     val mYear = !trackMode && tags.year.mixed
 
     // 입력 중인 값
-    var title by remember { mutableStateOf(iTitle) }
+    // 처음부터 전체가 선택된 상태로 열어서, 바로 타이핑하면 통째로 바뀌고 방향키/탭으로 일부만 고칠 수도 있다
+    var titleTv by remember { mutableStateOf(TextFieldValue(startTitle, TextRange(0, startTitle.length))) }
+    val title = titleTv.text
+    val titleFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (trackMode) {
+            try {
+                titleFocus.requestFocus()
+            } catch (e: Exception) {
+                // 포커스를 못 줘도 직접 눌러서 편집 가능
+            }
+        }
+    }
     var trackNoText by remember { mutableStateOf(iTrackNo) }
     var albumText by remember { mutableStateOf(iAlbum) }
     var artistText by remember { mutableStateOf(iArtist) }
@@ -258,7 +279,7 @@ fun EditScreen(
                         onSave(
                             EditRequest(
                                 trackIds = if (track != null) listOf(track.id) else album.tracks.map { it.id },
-                                title = if (cTitle) title.trim() else null,
+                                title = if (cTitle) NameCleaner.clean(title) else null,
                                 trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: 0) else null,
                                 album = if (cAlbum) albumText.trim() else null,
                                 artist = if (cArtist) artistText.trim() else null,
@@ -357,7 +378,13 @@ fun EditScreen(
 
                 // 입력칸
                 if (trackMode) {
-                    EditField("트랙명", title, { title = it })
+                    OutlinedTextField(
+                        value = titleTv,
+                        onValueChange = { titleTv = it },
+                        label = { Text("트랙명") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).focusRequester(titleFocus)
+                    )
                     EditField(
                         "트랙번호", trackNoText,
                         { trackNoText = it.filter { c -> c.isDigit() }.take(3) },
