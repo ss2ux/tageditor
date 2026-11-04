@@ -59,36 +59,81 @@ object TrackNumbering {
         album: Album,
         numbers: Map<Long, Int>,
         onProgress: (Int, Int) -> Unit
-    ): SaveResult {
-        val base = Environment.getExternalStorageDirectory()
-        val targets = album.tracks.filter { numbers.containsKey(it.id) }
-        val done = ArrayList<String>()
-        val failed = ArrayList<String>()
-
-        targets.forEachIndexed { i, t ->
-            val f = File(base, album.path + t.displayName)
-            try {
-                if (!f.name.endsWith(".mp3", ignoreCase = true)) {
-                    throw IOException("mp3 파일만 수정할 수 있어요")
-                }
-                val n = numbers[t.id] ?: 0
-                Id3Writer.write(f, EditRequest(trackIds = listOf(t.id), trackNo = n))
-                done.add(f.absolutePath)
-            } catch (e: Throwable) {
-                failed.add("${t.displayName} (${e.message ?: e.javaClass.simpleName})")
-            }
-            onProgress(i + 1, targets.size)
+    ): SaveResult =
+        saveEach(context, album, numbers.keys, onProgress) { t ->
+            EditRequest(trackIds = listOf(t.id), trackNo = numbers[t.id] ?: 0)
         }
+}
 
-        if (done.isNotEmpty()) {
-            try {
-                val latch = CountDownLatch(done.size)
-                MediaScannerConnection.scanFile(context, done.toTypedArray(), null) { _, _ -> latch.countDown() }
-                latch.await(30, TimeUnit.SECONDS)
-            } catch (e: Throwable) {
-                // 갱신이 늦어도 저장 자체는 끝난 상태
-            }
+/**
+ * 파일명으로 트랙명(제목 태그) 일괄 바꾸기.
+ * 파일명에서 .mp3(삭제문구)만 빼고 그대로 쓴다. 앞의 01_ 같은 번호는 지우지 않는다.
+ * 파일명이 한글인데 태그 제목이 일본어/중국어일 때 한 번에 맞추려고 만든 기능.
+ */
+object FileTitles {
+    class Item(val track: Track, val before: String, val after: String)
+
+    fun fileTitle(track: Track): String = NameCleaner.clean(track.displayName)
+
+    /** 바뀌는 곡만 돌려준다 (이미 파일명과 같은 곡, 파일명이 빈 곡은 제외) */
+    fun plan(tracks: List<Track>, tags: AlbumTags): List<Item> {
+        val out = ArrayList<Item>()
+        for (t in tracks) {
+            val after = fileTitle(t)
+            if (after.isBlank()) continue
+            val before = tags.perTrack[t.id]?.title ?: ""
+            if (before.trim() != after) out.add(Item(t, before, after))
         }
-        return SaveResult(done.size, failed)
+        return out
     }
+
+    /** 곡마다 다른 트랙명을 쓴다. 트랙명(TIT2)만 바꾸고 나머지 태그는 그대로. 반드시 백그라운드에서 호출. */
+    fun save(
+        context: Context,
+        album: Album,
+        titles: Map<Long, String>,
+        onProgress: (Int, Int) -> Unit
+    ): SaveResult =
+        saveEach(context, album, titles.keys, onProgress) { t ->
+            EditRequest(trackIds = listOf(t.id), title = titles[t.id] ?: "")
+        }
+}
+
+/** 곡마다 다른 요청을 한 곡씩 저장하고, 끝나면 미디어 DB를 새로 읽게 한다. */
+private fun saveEach(
+    context: Context,
+    album: Album,
+    ids: Set<Long>,
+    onProgress: (Int, Int) -> Unit,
+    makeRequest: (Track) -> EditRequest
+): SaveResult {
+    val base = Environment.getExternalStorageDirectory()
+    val targets = album.tracks.filter { it.id in ids }
+    val done = ArrayList<String>()
+    val failed = ArrayList<String>()
+
+    targets.forEachIndexed { i, t ->
+        val f = File(base, album.path + t.displayName)
+        try {
+            if (!f.name.endsWith(".mp3", ignoreCase = true)) {
+                throw IOException("mp3 파일만 수정할 수 있어요")
+            }
+            Id3Writer.write(f, makeRequest(t))
+            done.add(f.absolutePath)
+        } catch (e: Throwable) {
+            failed.add("${t.displayName} (${e.message ?: e.javaClass.simpleName})")
+        }
+        onProgress(i + 1, targets.size)
+    }
+
+    if (done.isNotEmpty()) {
+        try {
+            val latch = CountDownLatch(done.size)
+            MediaScannerConnection.scanFile(context, done.toTypedArray(), null) { _, _ -> latch.countDown() }
+            latch.await(30, TimeUnit.SECONDS)
+        } catch (e: Throwable) {
+            // 갱신이 늦어도 저장 자체는 끝난 상태
+        }
+    }
+    return SaveResult(done.size, failed)
 }

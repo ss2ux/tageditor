@@ -68,6 +68,7 @@ import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -104,6 +105,19 @@ data class EditRequest(
         if (genre != null) add("장르")
         if (artJpeg != null) add("앨범아트")
     }
+}
+
+// 폴더명 끝의 RJ번호(RJ123456, [RJ123456], (RJ01234567), _RJ123456 등)는 앨범명 기본값에서 뺀다.
+private val rjTail = Regex("""[\s_\-]*[\[(（【]?\s*RJ\d{6,}\s*[\])）】]?\s*$""", RegexOption.IGNORE_CASE)
+
+private fun stripRj(name: String): String {
+    var r = name.trim()
+    while (true) {
+        val n = rjTail.replace(r, "").trim()
+        if (n == r) break
+        r = n
+    }
+    return r.ifBlank { name }   // 폴더명이 RJ번호뿐이면 그대로 둔다
 }
 
 // ----------------------------------------------------------------------
@@ -175,6 +189,7 @@ fun EditScreen(
     // 시작값
     // 트랙명: 태그에 제목이 있으면 그 값, 없으면 파일명(삭제문구 .mp3 제외)을 그대로 보여준다.
     // 비교 기준(iTitle)은 처음 보여준 값이라, 건드리지 않으면 트랙명 태그는 바뀌지 않는다.
+    val fileTitle = NameCleaner.clean(track?.displayName ?: "")
     val rawTitle = tTag?.title ?: ""
     val iTitle = if (rawTitle.isBlank()) NameCleaner.clean(track?.displayName ?: "") else rawTitle
     val startTitle = if (rawTitle.isBlank()) iTitle else NameCleaner.clean(rawTitle)
@@ -182,7 +197,7 @@ fun EditScreen(
     // 앨범명 기본값: 태그가 비어 있거나 곡마다 다르면 폴더명을 넣어 둔다
     val folderName = remember(album) {
         val p = album.path.trimEnd('/')
-        if ('/' !in p) "" else p.substringAfterLast('/')   // Download/Music 바로 아래 낱개 곡은 폴더명 없음
+        if ('/' !in p) "" else stripRj(p.substringAfterLast('/'))   // Download/Music 바로 아래 낱개 곡은 폴더명 없음
     }
     val iAlbum = if (trackMode) (tTag?.album ?: "") else {
         val base = if (tags.album.mixed) "" else tags.album.value
@@ -438,6 +453,15 @@ fun EditScreen(
                             .onGloballyPositioned { titleRect = it.boundsInRoot() }
                             .focusRequester(titleFocus)
                     )
+                    if (fileTitle.isNotBlank() && title.trim() != fileTitle) {
+                        TextButton(
+                            onClick = {
+                                toolbar.hide()
+                                titleTv = TextFieldValue(fileTitle, TextRange(fileTitle.length))
+                            },
+                            modifier = Modifier.align(Alignment.End)
+                        ) { Text("파일명으로: $fileTitle", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
                     EditField(
                         "트랙번호", trackNoText,
                         { trackNoText = it.filter { c -> c.isDigit() }.take(3) },
@@ -449,7 +473,7 @@ fun EditScreen(
                     TextButton(
                         onClick = { albumText = folderName },
                         modifier = Modifier.align(Alignment.End)
-                    ) { Text("폴더명으로: $folderName", maxLines = 1) }
+                    ) { Text("폴더명으로: $folderName", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
                 EditField("아티스트", artistText, { artistText = it }, mArtist)
                 EditField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)

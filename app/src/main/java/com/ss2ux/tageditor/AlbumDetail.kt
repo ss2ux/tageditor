@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -79,6 +81,8 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     var showPermission by remember { mutableStateOf(false) }
     // 7단계: 트랙번호 자동 배분 미리보기 창
     var showNumbering by remember(album.key) { mutableStateOf(false) }
+    // 파일명으로 트랙명 일괄 바꾸기 미리보기 창
+    var showTitles by remember(album.key) { mutableStateOf(false) }
 
     // 5단계: 수정 화면 (editTarget == null 이면 앨범 전체, 아니면 그 트랙만)
     var editing by remember(album.key) { mutableStateOf(false) }
@@ -132,24 +136,45 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                 }
                 Box(modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    if (album.tracks.isEmpty()) {
-                        Toast.makeText(ctx, "곡이 없어요", Toast.LENGTH_SHORT).show()
-                    } else {
-                        showNumbering = true
+                TextButton(
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    onClick = {
+                        if (album.tracks.isEmpty()) {
+                            Toast.makeText(ctx, "곡이 없어요", Toast.LENGTH_SHORT).show()
+                        } else if (tags == null) {
+                            Toast.makeText(ctx, "태그를 읽는 중이에요. 잠시 후 다시 눌러 주세요", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showTitles = true
+                        }
                     }
-                }) {
+                ) {
+                    Icon(Icons.Default.Title, contentDescription = null)
+                    Text("  제목", fontSize = 15.sp)
+                }
+                TextButton(
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    onClick = {
+                        if (album.tracks.isEmpty()) {
+                            Toast.makeText(ctx, "곡이 없어요", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showNumbering = true
+                        }
+                    }
+                ) {
                     Icon(Icons.Default.FormatListNumbered, contentDescription = null)
                     Text("  번호", fontSize = 15.sp)
                 }
-                TextButton(onClick = {
-                    if (tags == null) {
-                        Toast.makeText(ctx, "태그를 읽는 중이에요. 잠시 후 다시 눌러 주세요", Toast.LENGTH_SHORT).show()
-                    } else {
-                        editTarget = selected
-                        editing = true
+                TextButton(
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    onClick = {
+                        if (tags == null) {
+                            Toast.makeText(ctx, "태그를 읽는 중이에요. 잠시 후 다시 눌러 주세요", Toast.LENGTH_SHORT).show()
+                        } else {
+                            editTarget = selected
+                            editing = true
+                        }
                     }
-                }) {
+                ) {
                     Icon(Icons.Default.Edit, contentDescription = null)
                     Text(
                         if (selected == null) "  앨범 수정" else "  트랙 수정",
@@ -423,6 +448,72 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { showNumbering = false }) { Text("취소") }
+            }
+        )
+    }
+
+    val tgForTitles = tags
+    if (showTitles && tgForTitles != null) {
+        val tplan = remember(album.tracks, tgForTitles) { FileTitles.plan(album.tracks, tgForTitles) }
+        AlertDialog(
+            onDismissRequest = { showTitles = false },
+            title = { Text("파일명으로 트랙명 바꾸기") },
+            text = {
+                Column {
+                    Text(
+                        "트랙명(제목 태그)을 파일명으로 바꿔요. .mp3는 빼고, 앞의 번호(01_ 등)는 그대로 들어가요.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (tplan.isEmpty()) {
+                        Text(
+                            "바꿀 곡이 없어요. 모든 트랙명이 이미 파일명과 같아요.",
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    } else {
+                        Text(
+                            "${album.tracks.size}곡 중 ${tplan.size}곡이 바뀌어요",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                        LazyColumn(modifier = Modifier.heightIn(max = 340.dp).padding(top = 8.dp)) {
+                            items(tplan) { row ->
+                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                                    Text(
+                                        row.before.ifBlank { "(비어 있음)" },
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "→ " + row.after,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = tplan.isNotEmpty(),
+                    onClick = {
+                        showTitles = false
+                        val map = HashMap<Long, String>()
+                        for (row in tplan) map[row.track.id] = row.after
+                        startSave(map.size) { p -> FileTitles.save(ctx, album, map, p) }
+                    }
+                ) { Text("적용") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTitles = false }) { Text("취소") }
             }
         )
     }
