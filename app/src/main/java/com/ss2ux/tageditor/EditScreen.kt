@@ -171,6 +171,8 @@ private fun formatYear(d: String): String =
  * track != null  -> 트랙 모드: 그 곡에만 적용 (트랙명, 트랙번호 입력칸이 추가됨)
  *
  * 값이 곡마다 다른 항목(여러 값)은 빈칸으로 시작하고, 비워 두면 "변경 안 함"이다.
+ * 단 장르는 예외: 항상 빈칸으로 시작하고, 비운 채 저장하면 모든 곡의 장르를 지운다.
+ * 앨범명은 RJ번호를 뺀 값(또는 폴더명)을 보여 주고, 실제 태그와 다르면 저장할 때 전 곡에 써 넣는다.
  */
 @Composable
 fun EditScreen(
@@ -199,21 +201,23 @@ fun EditScreen(
         val p = album.path.trimEnd('/')
         if ('/' !in p) "" else stripRj(p.substringAfterLast('/'))   // Download/Music 바로 아래 낱개 곡은 폴더명 없음
     }
-    val iAlbum = if (trackMode) (tTag?.album ?: "") else {
-        val base = if (tags.album.mixed) "" else tags.album.value
-        if (base.isBlank()) folderName else base
-    }
+    // 실제 태그에 들어 있는 앨범명 (앨범 모드에서 곡마다 다르면 ""). 바뀌었는지는 이 값과 비교한다.
+    val tagAlbum = if (trackMode) (tTag?.album ?: "") else if (tags.album.mixed) "" else tags.album.value
+    // 화면에 처음 보여 줄 값: 앨범 모드에서는 RJ번호를 뺀 값, 비어 있거나 곡마다 다르면 폴더명
+    // (보여 주는 값이 실제 태그와 다르면 "바뀐 것"으로 쳐서 저장할 때 모든 곡에 실제로 써 넣는다)
+    val iAlbum = if (trackMode) tagAlbum else stripRj(tagAlbum).ifBlank { folderName }
     val iArtist = if (trackMode) (tTag?.artist ?: "") else if (tags.artist.mixed) "" else tags.artist.value
     val iAlbumArtist =
         if (trackMode) (tTag?.albumArtist ?: "") else if (tags.albumArtist.mixed) "" else tags.albumArtist.value
-    val iGenre = if (trackMode) (tTag?.genre ?: "") else if (tags.genre.mixed) "" else tags.genre.value
+    // 장르: 항상 빈칸으로 시작하고, 빈칸인 채로 저장하면 장르를 모두 지운다 (RJ번호를 빼고 넣는 것처럼 장르도 날림)
+    val iGenre = ""
+    val genreHas = if (trackMode) !(tTag?.genre).isNullOrBlank() else (tags.genre.value.isNotBlank() || tags.genre.mixed)
     val iYear = (if (trackMode) (tTag?.year ?: "") else if (tags.year.mixed) "" else tags.year.value)
         .filter { it.isDigit() }.take(8)
 
     val mAlbum = !trackMode && tags.album.mixed && iAlbum.isBlank()
     val mArtist = !trackMode && tags.artist.mixed
     val mAlbumArtist = !trackMode && tags.albumArtist.mixed
-    val mGenre = !trackMode && tags.genre.mixed
     val mYear = !trackMode && tags.year.mixed
 
     // 입력 중인 값
@@ -307,10 +311,10 @@ fun EditScreen(
     val yearOk = yearDigits == iYear || isValidYear(yearDigits)
     val cTitle = trackMode && title.trim() != iTitle.trim()
     val cTrackNo = trackMode && trackNoText != iTrackNo
-    val cAlbum = albumText.trim() != iAlbum.trim()
+    val cAlbum = albumText.trim() != tagAlbum.trim()
     val cArtist = artistText.trim() != iArtist.trim()
     val cAlbumArtist = albumArtistText.trim() != iAlbumArtist.trim()
-    val cGenre = genreText.trim() != iGenre.trim()
+    val cGenre = genreHas || genreText.trim().isNotEmpty()   // 지울 장르가 있거나, 새로 입력했으면 바뀐 것
     val cYear = yearDigits != iYear
     val anyChange = cTitle || cTrackNo || cAlbum || cArtist || cAlbumArtist || cGenre || cYear || newArt != null
     val canSave = anyChange && yearOk && !artBusy
@@ -346,7 +350,8 @@ fun EditScreen(
                                 artist = if (cArtist) artistText.trim() else null,
                                 albumArtist = if (cAlbumArtist) albumArtistText.trim() else null,
                                 year = if (cYear) formatYear(yearDigits) else null,
-                                genre = if (cGenre) genreText.trim() else null,
+                                // 빈칸이면 "" -> 장르 프레임 삭제. 화면에 안 보이는 이상한 값도 같이 지워진다
+                                genre = genreText.trim(),
                                 artJpeg = newArt?.jpeg
                             )
                         )
@@ -497,7 +502,7 @@ fun EditScreen(
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
                 )
 
-                EditField("장르", genreText, { genreText = it }, mGenre)
+                EditField("장르", genreText, { genreText = it }, hint = "비워 두고 저장하면 장르가 모두 지워져요")
 
                 Box(modifier = Modifier.padding(bottom = 96.dp))
             }
@@ -556,13 +561,16 @@ private fun EditField(
     value: String,
     onChange: (String) -> Unit,
     mixed: Boolean = false,
-    keyboardType: KeyboardType = KeyboardType.Text
+    keyboardType: KeyboardType = KeyboardType.Text,
+    hint: String? = null
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
-        placeholder = { if (mixed) Text("여러 값 · 그대로 두면 변경 안 함") },
+        placeholder = {
+            if (mixed) Text("여러 값 · 그대로 두면 변경 안 함") else if (hint != null) Text(hint)
+        },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
