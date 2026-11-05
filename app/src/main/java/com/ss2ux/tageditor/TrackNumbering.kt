@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
  * 7단계: 파일명 맨 앞의 숫자로 트랙번호를 알아내는 도구.
  * - 접두어(tr, track, 트랙, t)가 있으면 뒤에 숫자만 와도 인식: track1, 트랙 2, t3
  * - 1a, 1B, 1c 처럼 숫자 뒤에 영문 한 글자가 붙은 것도 그 숫자(1)로 인식
+ * - 맨 앞에 #(또는 # 와 공백)이 있어도 없는 것처럼 똑같이 처리: #1, #1-A, #1-b -> 1
  * - 2-A, 2-B, 3_a, 2 - A, 2–B(긴 하이픈) 처럼 숫자 뒤에 구분 기호(- _ .)와 영문 한 글자도 그 숫자(2)로 인식
  * - 접두어가 없으면 숫자 뒤에 _ - . 가 있거나 숫자만 있어야 인식: 01_, 1-, 1
  *   (곡 제목이 "1999" 처럼 숫자로 시작하는 경우를 트랙번호로 오인하지 않기 위함)
@@ -31,7 +32,8 @@ object TrackNumbering {
         Regex("""^0*(\d{1,3})\s*[\-_.\u2010-\u2015\uFF0D]\s*[A-Za-z](?=[\s_\-.\u2010-\u2015\uFF0D]|$)""")
 
     fun parse(fileName: String): Int? {
-        val name = fileName.substringBeforeLast('.').trim()
+        // 맨 앞의 # (＃ 포함)은 없는 것으로 본다: #1 -> 1, #1-A -> 1, # 2_b -> 2
+        val name = fileName.substringBeforeLast('.').trim().trimStart('#', '\uFF03', ' ', '\t')
         val m = withPrefix.find(name) ?: plainNumber.find(name) ?: numberLetter.find(name)
             ?: numberSepLetter.find(name) ?: return null
         return m.groupValues[1].toIntOrNull()?.takeIf { it >= 0 }
