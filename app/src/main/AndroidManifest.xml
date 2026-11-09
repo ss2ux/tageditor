@@ -6,6 +6,19 @@
     <!-- 6단계: Download 폴더의 mp3 파일에 태그를 직접 쓰기 위한 "모든 파일 액세스" 권한 (개인용 앱) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- DeepL 앱을 찾아서 번역 창을 띄우기 위한 설정 -->
+    <queries>
+        <package android:name="com.deepl.mobiletranslator" />
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
     <application
         android:label="Tag Editor"
         android:icon="@mipmap/ic_launcher"
