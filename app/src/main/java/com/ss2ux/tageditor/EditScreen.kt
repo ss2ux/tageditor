@@ -1,6 +1,8 @@
 package com.ss2ux.tageditor
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ImageDecoder
@@ -39,6 +41,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,6 +63,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
@@ -215,6 +220,20 @@ fun EditScreen(
     val iYear = (if (trackMode) (tTag?.year ?: "") else if (tags.year.mixed) "" else tags.year.value)
         .filter { it.isDigit() }.take(8)
 
+    // 새로 추가한 곡처럼 이 곡의 값이 비어 있으면, 앨범에서 가장 많은 값(다수값)을 자동으로 채운다.
+    // (Agg.value 는 곡마다 값이 달라도 "가장 많은 값"이 들어 있다)
+    val albumArtistMajor = if (trackMode) tags.albumArtist.value.trim() else ""
+    val artistMajor = if (trackMode) tags.artist.value.trim() else ""
+    val yearMajor = if (trackMode) tags.year.value.filter { it.isDigit() }.take(8) else ""
+    val autoArtist = if (trackMode && iArtist.isBlank()) artistMajor else ""
+    val autoAlbumArtist = if (trackMode && iAlbumArtist.isBlank()) albumArtistMajor else ""
+    val autoYear = if (trackMode && iYear.isBlank()) yearMajor else ""
+    val autoFilledNames = buildList {
+        if (autoArtist.isNotEmpty()) add("아티스트")
+        if (autoAlbumArtist.isNotEmpty()) add("앨범 아티스트")
+        if (autoYear.isNotEmpty()) add("연도")
+    }
+
     val mAlbum = !trackMode && tags.album.mixed && iAlbum.isBlank()
     val mArtist = !trackMode && tags.artist.mixed
     val mAlbumArtist = !trackMode && tags.albumArtist.mixed
@@ -226,8 +245,76 @@ fun EditScreen(
     val title = titleTv.text
     val titleFocus = remember { FocusRequester() }
     var titleRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
-    val toolbar = LocalTextToolbar.current
+    val view = LocalView.current
+    val toolbar = remember(view) { TranslateTextToolbar(view) }
     val clipboard = LocalClipboardManager.current
+
+    // ---- DeepL 번역 ----
+    // 이미 깔려 있는 DeepL 앱의 "텍스트 처리(PROCESS_TEXT)" 창을 띄운다.
+    // DeepL 창에서 "바꾸기"처럼 결과를 돌려주면 선택했던 부분을 번역문으로 바꿔 넣는다.
+    var translateRange by remember { mutableStateOf<TextRange?>(null) }
+    val translateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val out = result.data?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+        val r = translateRange
+        if (result.resultCode == Activity.RESULT_OK && !out.isNullOrBlank() && r != null) {
+            val t = titleTv
+            val a = r.min.coerceIn(0, t.text.length)
+            val b = r.max.coerceIn(a, t.text.length)
+            val rep = out.replace('\n', ' ')
+            titleTv = TextFieldValue(t.text.substring(0, a) + rep + t.text.substring(b), TextRange(a + rep.length))
+        }
+        translateRange = null
+    }
+    fun startTranslate() {
+        val t = titleTv
+        // 선택한 글자가 없으면 트랙명 전체를 번역
+        val sel = if (t.selection.collapsed) TextRange(0, t.text.length) else t.selection
+        val src = t.text.substring(sel.min, sel.max)
+        if (src.isBlank()) {
+            Toast.makeText(ctx, "번역할 글자가 없어요", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val pm = ctx.packageManager
+        fun isDeepl(ri: android.content.pm.ResolveInfo) =
+            ri.activityInfo.packageName.contains("deepl", ignoreCase = true) ||
+                ri.loadLabel(pm).toString().contains("deepl", ignoreCase = true)
+        try {
+            // 1순위: 텍스트 선택 메뉴용 창 (결과를 돌려받아 바로 바꿔 넣을 수 있음)
+            val pt = pm.queryIntentActivities(Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain"), 0)
+                .firstOrNull { isDeepl(it) }
+            if (pt != null) {
+                translateRange = sel
+                translateLauncher.launch(
+                    Intent(Intent.ACTION_PROCESS_TEXT)
+                        .setClassName(pt.activityInfo.packageName, pt.activityInfo.name)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_PROCESS_TEXT, src)
+                        .putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false)
+                )
+                return
+            }
+            // 2순위: 공유 창 (번역문은 DeepL 화면에서 복사해서 붙여넣어야 함)
+            val sd = pm.queryIntentActivities(Intent(Intent.ACTION_SEND).setType("text/plain"), 0)
+                .firstOrNull { isDeepl(it) }
+            if (sd != null) {
+                ctx.startActivity(
+                    Intent(Intent.ACTION_SEND)
+                        .setClassName(sd.activityInfo.packageName, sd.activityInfo.name)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_TEXT, src)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                Toast.makeText(ctx, "번역문은 DeepL에서 복사한 뒤 붙여넣어 주세요", Toast.LENGTH_LONG).show()
+                return
+            }
+            Toast.makeText(ctx, "DeepL 앱을 찾지 못했어요. 설치되어 있는지 확인해 주세요", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            translateRange = null
+            Toast.makeText(ctx, "DeepL을 열지 못했어요", Toast.LENGTH_SHORT).show()
+        }
+    }
+    // 메뉴에서 번역을 눌렀을 때 항상 최신 트랙명으로 실행되도록 매번 연결해 둔다
+    SideEffect { toolbar.onTranslate = { startTranslate() } }
     LaunchedEffect(Unit) {
         if (trackMode) {
             try {
@@ -276,10 +363,10 @@ fun EditScreen(
     }
     var trackNoText by remember { mutableStateOf(iTrackNo) }
     var albumText by remember { mutableStateOf(iAlbum) }
-    var artistText by remember { mutableStateOf(iArtist) }
-    var albumArtistText by remember { mutableStateOf(iAlbumArtist) }
+    var artistText by remember { mutableStateOf(iArtist.ifBlank { autoArtist }) }
+    var albumArtistText by remember { mutableStateOf(iAlbumArtist.ifBlank { autoAlbumArtist }) }
     var genreText by remember { mutableStateOf(iGenre) }
-    var yearDigits by remember { mutableStateOf(iYear) }
+    var yearDigits by remember { mutableStateOf(iYear.ifBlank { autoYear }) }
 
     var newArt by remember { mutableStateOf<NewArt?>(null) }
     var artBusy by remember { mutableStateOf(false) }
@@ -444,6 +531,7 @@ fun EditScreen(
 
                 // 입력칸
                 if (trackMode) {
+                    CompositionLocalProvider(LocalTextToolbar provides toolbar) {
                     OutlinedTextField(
                         value = titleTv,
                         onValueChange = {
@@ -458,6 +546,7 @@ fun EditScreen(
                             .onGloballyPositioned { titleRect = it.boundsInRoot() }
                             .focusRequester(titleFocus)
                     )
+                    }
                     if (fileTitle.isNotBlank() && title.trim() != fileTitle) {
                         TextButton(
                             onClick = {
@@ -479,6 +568,24 @@ fun EditScreen(
                         onClick = { albumText = folderName },
                         modifier = Modifier.align(Alignment.End)
                     ) { Text("폴더명으로: $folderName", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+                if (trackMode && (artistMajor.isNotEmpty() || albumArtistMajor.isNotEmpty() || yearMajor.isNotEmpty())) {
+                    Text(
+                        if (autoFilledNames.isNotEmpty())
+                            "비어 있던 ${autoFilledNames.joinToString(", ")}을(를) 앨범의 다수값으로 채웠어요"
+                        else "아티스트·앨범 아티스트·연도를 앨범의 다수값으로 바꿀 수 있어요",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp)
+                    )
+                    TextButton(
+                        onClick = {
+                            if (artistMajor.isNotEmpty()) artistText = artistMajor
+                            if (albumArtistMajor.isNotEmpty()) albumArtistText = albumArtistMajor
+                            if (yearMajor.isNotEmpty()) yearDigits = yearMajor
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) { Text("앨범 다수값 불러오기") }
                 }
                 EditField("아티스트", artistText, { artistText = it }, mArtist)
                 EditField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
