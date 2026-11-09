@@ -248,12 +248,22 @@ fun LibraryScreen() {
             }
         }
 
+        // 지금 설치된 앱의 버전 (새 빌드가 제대로 설치됐는지 확인용)
+        val appVersion = remember {
+            try {
+                ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
+            } catch (e: Exception) {
+                "?"
+            }
+        }
         val status = buildString {
             append("앨범 ${filtered.size}개")
             if (query.isNotBlank()) append(" (전체 ${albums.size}개 중)")
             if (loadMs >= 0) append(" · 목록 로딩 ${loadMs}ms")
             append(" · ")
             append(folders.joinToString("+"))
+            append(" · v")
+            append(appVersion)
         }
         Text(
             status,
