@@ -61,9 +61,10 @@ class TranslateTextToolbar(private val view: View) : TextToolbar {
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
         if (onCut != null) menu.add(0, ID_CUT, 2, android.R.string.cut)
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        if (onSelectAll != null) menu.add(0, ID_SELECT_ALL, 3, android.R.string.selectAll)
+        // 순서: 복사 / 붙여넣기 / 잘라내기 / DeepL 번역 / 모두 선택
+        if (onTranslate != null) menu.add(0, ID_TRANSLATE, 3, "DeepL 번역")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        if (onTranslate != null) menu.add(0, ID_TRANSLATE, 4, "DeepL 번역")
+        if (onSelectAll != null) menu.add(0, ID_SELECT_ALL, 4, android.R.string.selectAll)
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
     }
 

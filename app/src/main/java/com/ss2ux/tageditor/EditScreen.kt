@@ -3,6 +3,7 @@ package com.ss2ux.tageditor
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.view.inputmethod.InputMethodManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ImageDecoder
@@ -531,6 +532,30 @@ fun EditScreen(
 
                 // 입력칸
                 if (trackMode) {
+                    // 트랙명 지우기: 키보드가 내려가 있어도(DeepL을 쓰고 돌아온 뒤 등) 누르면 바로 비워진다.
+                    // 비운 뒤에는 바로 붙여넣을 수 있게 커서를 트랙명 칸으로 돌려놓고 키보드를 다시 올린다.
+                    TextButton(
+                        onClick = {
+                            toolbar.hide()
+                            titleTv = TextFieldValue("", TextRange(0))
+                            scope.launch {
+                                try {
+                                    titleFocus.requestFocus()
+                                } catch (e: Exception) {
+                                    // 포커스를 못 줘도 이미 비워졌으니 괜찮다
+                                }
+                                delay(80)
+                                try {
+                                    val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                                    imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+                                } catch (e: Exception) {
+                                    // 키보드는 직접 눌러서 올려도 된다
+                                }
+                            }
+                        },
+                        enabled = title.isNotEmpty(),
+                        modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                    ) { Text("트랙명 지우기") }
                     CompositionLocalProvider(LocalTextToolbar provides toolbar) {
                     OutlinedTextField(
                         value = titleTv,
