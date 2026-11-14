@@ -194,6 +194,11 @@ fun EditScreen(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 이 기기의 다른 앨범들에 적힌 "앨범 아티스트" 목록 (추천용). 수정 화면을 열 때 한 번 읽는다.
+    var deviceAlbumArtists by remember { mutableStateOf(AlbumArtistIndex.names) }
+    LaunchedEffect(Unit) {
+        deviceAlbumArtists = withContext(Dispatchers.IO) { AlbumArtistIndex.load(ctx) }
+    }
     val trackMode = track != null
     val tTag = track?.let { tags.perTrack[it.id] }
 
@@ -629,7 +634,7 @@ fun EditScreen(
                 // 한 글자 이상 적으면, 이미 있는 아티스트 이름 중 비슷한 것을 작게 추천한다
                 val aaQuery = albumArtistText.trim()
                 if (aaQuery.isNotEmpty()) {
-                    val sugg = suggestAlbumArtists(aaQuery, artistText, tags)
+                    val sugg = suggestAlbumArtists(aaQuery, artistText, tags, deviceAlbumArtists)
                     if (sugg.isNotEmpty()) {
                         SuggestionRow(sugg) { albumArtistText = it }
                     }
@@ -870,6 +875,50 @@ private fun ArtistField(
 // 앨범 아티스트 추천
 // ----------------------------------------------------------------------
 
+/**
+ * 이 기기의 모든 음악 파일에 적힌 "앨범 아티스트" 태그 모음 (안드로이드 미디어 DB에서 읽음 · 파일을 열지 않아 빠름).
+ * 많이 쓰인 것이 앞에 온다. 안드로이드 11 미만에서는 미디어 DB에 이 정보가 없어 빈 목록이다.
+ */
+object AlbumArtistIndex {
+    @Volatile
+    var names: List<String> = emptyList()
+
+    fun load(context: android.content.Context): List<String> {
+        if (android.os.Build.VERSION.SDK_INT < 30) return names
+        val counts = HashMap<String, Int>()
+        try {
+            val col = android.provider.MediaStore.Audio.AudioColumns.ALBUM_ARTIST
+            context.contentResolver.query(
+                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(col),
+                "$col IS NOT NULL AND $col != ''",
+                null,
+                null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val v = (c.getString(0) ?: "").trim()
+                    if (v.isEmpty() || v == "<unknown>") continue
+                    counts[v] = (counts[v] ?: 0) + 1
+                }
+            }
+        } catch (e: Exception) {
+            return names
+        }
+        // "A / B" 처럼 여러 명이면 한 명씩도 후보로 (한 명 쪽에 개수를 더해 준다)
+        val merged = HashMap<String, Int>(counts)
+        for ((full, n) in counts) {
+            if (" / " in full) {
+                for (part in full.split(" / ")) {
+                    val t = part.trim()
+                    if (t.isNotEmpty()) merged[t] = (merged[t] ?: 0) + n
+                }
+            }
+        }
+        names = merged.entries.sortedByDescending { it.value }.map { it.key }
+        return names
+    }
+}
+
 /** 목록에 있는 모든 앨범의 아티스트 이름 모음 (목록 화면이 갱신할 때마다 채운다) */
 object ArtistIndex {
     @Volatile
@@ -895,8 +944,9 @@ object ArtistIndex {
  *  1) 지금 이 화면의 아티스트 칸  2) 이 앨범 곡들의 태그(아티스트/앨범 아티스트)  3) 목록 전체의 아티스트
  * 적은 글자로 시작하는 것을 먼저, 글자가 들어 있는 것을 그다음에 보여준다.
  */
-private fun suggestAlbumArtists(query: String, artistText: String, tags: AlbumTags): List<String> {
+private fun suggestAlbumArtists(query: String, artistText: String, tags: AlbumTags, deviceAlbumArtists: List<String>): List<String> {
     val pool = ArrayList<String>()
+    pool.addAll(deviceAlbumArtists)   // 이 기기의 다른 앨범들에 적힌 앨범 아티스트가 가장 먼저
     fun addWithParts(v: String) {
         val t = v.trim()
         if (t.isEmpty()) return
