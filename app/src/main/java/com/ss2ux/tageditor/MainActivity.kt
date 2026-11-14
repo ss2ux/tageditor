@@ -305,6 +305,9 @@ fun LibraryScreen() {
         }
     }
 
+    // 앨범 아티스트 추천용: 목록에 있는 아티스트 이름을 모아 둔다
+    LaunchedEffect(albums) { ArtistIndex.update(albums) }
+
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },

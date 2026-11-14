@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -624,6 +626,14 @@ fun EditScreen(
                     ) { Text("앨범 다수값 불러오기") }
                 }
                 ArtistField("아티스트", artistText, { artistText = it }, mArtist)
+                // 한 글자 이상 적으면, 이미 있는 아티스트 이름 중 비슷한 것을 작게 추천한다
+                val aaQuery = albumArtistText.trim()
+                if (aaQuery.isNotEmpty()) {
+                    val sugg = suggestAlbumArtists(aaQuery, artistText, tags)
+                    if (sugg.isNotEmpty()) {
+                        SuggestionRow(sugg) { albumArtistText = it }
+                    }
+                }
                 EditField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
 
                 // 연도: 숫자만 입력, 점은 자동
@@ -732,7 +742,7 @@ private fun EditField(
 private fun isSepChar(c: Char): Boolean = c.isWhitespace() || c == '/'
 
 /** 바뀐 입력을 정리한다. 반환: (새 글, 커서 위치). null 이면 손대지 않고 그대로 통과. */
-private fun reformatArtist(old: String, new: String, cursor: Int, clip: () -> String?): Pair<String, Int>? {
+private fun reformatArtist(old: String, new: String, cursor: Int, composing: Boolean, clip: () -> String?): Pair<String, Int>? {
     // 이전 글과 새 글을 비교해 "지워진 부분"과 "들어온 부분"을 찾는다
     var p = 0
     val maxP = minOf(old.length, new.length)
@@ -744,9 +754,12 @@ private fun reformatArtist(old: String, new: String, cursor: Int, clip: () -> St
     val inserted = new.substring(p, new.length - s)
     val deleting = new.length < old.length
 
-    // 붙여넣기 판단: 한 번에 2글자 이상 들어왔고 클립보드 내용과 같을 때만 (자동완성과 구분)
+    // 붙여넣기 판단:
+    //  (1) 글자 조합 중이 아닐 때 2글자 이상이 한꺼번에 들어왔거나(= 붙여넣기),
+    //  (2) 선택한 글자를 바꿔 넣는 경우엔 클립보드 내용과 같을 때
     val ins = inserted.trim()
-    val isPaste = ins.length >= 2 && ins == (clip()?.trim() ?: "")
+    val bigInsert = !composing && removed.isEmpty() && ins.length >= 2
+    val isPaste = bigInsert || (ins.length >= 2 && ins == (clip()?.trim() ?: ""))
 
     // 띄어쓰기/슬래시가 오가지도 않고 붙여넣기도 아니면 (일반 글자 입력) 손대지 않는다 (한글 조합 보호)
     if (!isPaste && !inserted.any { isSepChar(it) } && !removed.any { isSepChar(it) }) return null
@@ -824,7 +837,7 @@ private fun ArtistField(
         value = tfv,
         onValueChange = { nv ->
             val r = if (nv.text == tfv.text) null
-            else reformatArtist(tfv.text, nv.text, nv.selection.end) { clipboard.getText()?.text }
+            else reformatArtist(tfv.text, nv.text, nv.selection.end, nv.composition != null) { clipboard.getText()?.text }
             if (r == null) {
                 tfv = nv
                 onChange(nv.text)
@@ -851,4 +864,97 @@ private fun ArtistField(
                 }
             }
     )
+}
+
+// ----------------------------------------------------------------------
+// 앨범 아티스트 추천
+// ----------------------------------------------------------------------
+
+/** 목록에 있는 모든 앨범의 아티스트 이름 모음 (목록 화면이 갱신할 때마다 채운다) */
+object ArtistIndex {
+    @Volatile
+    var names: List<String> = emptyList()
+
+    fun update(albums: List<Album>) {
+        val set = LinkedHashSet<String>()
+        for (a in albums) {
+            val full = a.artist.trim()
+            if (full.isEmpty() || full == "알 수 없는 아티스트") continue
+            set.add(full)
+            for (n in full.split(" / ")) {
+                val t = n.trim()
+                if (t.isNotEmpty()) set.add(t)
+            }
+        }
+        names = set.toList()
+    }
+}
+
+/**
+ * 추천 후보를 모은다. 우선순위:
+ *  1) 지금 이 화면의 아티스트 칸  2) 이 앨범 곡들의 태그(아티스트/앨범 아티스트)  3) 목록 전체의 아티스트
+ * 적은 글자로 시작하는 것을 먼저, 글자가 들어 있는 것을 그다음에 보여준다.
+ */
+private fun suggestAlbumArtists(query: String, artistText: String, tags: AlbumTags): List<String> {
+    val pool = ArrayList<String>()
+    fun addWithParts(v: String) {
+        val t = v.trim()
+        if (t.isEmpty()) return
+        pool.add(t)
+        for (n in t.split(" / ")) {
+            val x = n.trim()
+            if (x.isNotEmpty()) pool.add(x)
+        }
+    }
+    addWithParts(artistText)
+    addWithParts(tags.albumArtist.value)
+    addWithParts(tags.artist.value)
+    for (t in tags.perTrack.values) {
+        addWithParts(t.artist)
+        addWithParts(t.albumArtist)
+    }
+    pool.addAll(ArtistIndex.names)
+
+    val seen = HashSet<String>()
+    val starts = ArrayList<String>()
+    val contains = ArrayList<String>()
+    for (c in pool) {
+        if (c.equals(query, ignoreCase = true)) continue
+        if (!seen.add(c.lowercase())) continue
+        if (c.startsWith(query, ignoreCase = true)) starts.add(c)
+        else if (c.contains(query, ignoreCase = true)) contains.add(c)
+    }
+    return (starts + contains).take(6)
+}
+
+/** 입력칸 위에 작게 보여 주는 추천 줄. 누르면 그 값으로 입력된다. */
+@Composable
+private fun SuggestionRow(items: List<String>, onPick: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            "추천 · 누르면 입력돼요",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        for (item in items) {
+            Text(
+                item,
+                fontSize = 12.sp,
+                maxLines = 1,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .clickable { onPick(item) }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+    }
 }
