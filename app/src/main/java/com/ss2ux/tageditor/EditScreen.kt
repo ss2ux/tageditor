@@ -504,14 +504,23 @@ fun EditScreen(
                     )
                 }
                 val na = newArt
-                Text(
-                    if (na != null) "새 앨범아트 ${ArtProcessor.SIZE}×${ArtProcessor.SIZE} · ${na.jpeg.size / 1024}KB"
-                    else "앨범아트는 바꾸지 않으면 그대로 유지돼요",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                )
+                if (na != null) {
+                    Text(
+                        "새 앨범아트 ${ArtProcessor.SIZE}×${ArtProcessor.SIZE} · ${na.jpeg.size / 1024}KB",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                } else {
+                    // 앨범아트를 아직 안 골랐을 때: 폴더명의 RJ 번호로 검색하는 줄
+                    val rj = remember(album) {
+                        val p = album.path.trimEnd('/')
+                        if ('/' !in p) null else RjSearch.extract(p.substringAfterLast('/'))
+                    }
+                    val rjUrl = remember { Prefs.rjUrl(ctx) }
+                    RjSearchRow(rj, rjUrl)
+                }
                 if (na != null) {
                     Row(modifier = Modifier.align(Alignment.CenterHorizontally)) {
                         TextButton(onClick = {

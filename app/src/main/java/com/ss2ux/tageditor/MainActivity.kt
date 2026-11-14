@@ -75,6 +75,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -94,6 +98,10 @@ object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
     fun includeMusic(c: Context) = sp(c).getBoolean("includeMusic", false)
     fun setIncludeMusic(c: Context, v: Boolean) = sp(c).edit().putBoolean("includeMusic", v).apply()
+
+    /** RJ 검색 주소 (RJ 번호가 들어갈 자리를 "RJ값" 이라고 적은 주소) */
+    fun rjUrl(c: Context): String = sp(c).getString("rjUrl", "") ?: ""
+    fun setRjUrl(c: Context, v: String) = sp(c).edit().putString("rjUrl", v).apply()
 }
 
 /**
@@ -165,6 +173,7 @@ fun AppRoot() {
 fun LibraryScreen() {
     val ctx = LocalContext.current
     var includeMusic by remember { mutableStateOf(Prefs.includeMusic(ctx)) }
+    var rjUrl by remember { mutableStateOf(Prefs.rjUrl(ctx)) }
     var albums by remember { mutableStateOf<List<Album>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var loadMs by remember { mutableStateOf(-1L) }
@@ -299,12 +308,14 @@ fun LibraryScreen() {
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
-            title = { Text("폴더 설정") },
+            title = { Text("설정") },
             text = {
-                Column {
-                    Text("Download 폴더는 항상 탐색해요.", fontSize = 14.sp)
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    // --- 폴더 ---
+                    Text("폴더", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                    Text("Download 폴더는 항상 탐색해요.", fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Music 폴더도 탐색", modifier = Modifier.weight(1f))
@@ -312,6 +323,40 @@ fun LibraryScreen() {
                             includeMusic = it
                             Prefs.setIncludeMusic(ctx, it)
                         })
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+                    // --- RJ 검색 ---
+                    Text("RJ 검색", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "앨범 수정 화면에서 폴더명의 RJ 번호로 검색할 주소예요. " +
+                            "RJ 번호가 들어갈 자리에 RJ값 이라고 적어 주세요.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                    OutlinedTextField(
+                        value = rjUrl,
+                        onValueChange = {
+                            rjUrl = it
+                            Prefs.setRjUrl(ctx, it.trim())
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        label = { Text("검색 주소") },
+                        placeholder = { Text("https://사이트주소/product/RJ값.html") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                        minLines = 2,
+                        maxLines = 4,
+                        isError = rjUrl.isNotBlank() && !RjSearch.hasPlaceholder(rjUrl)
+                    )
+                    if (rjUrl.isNotBlank() && !RjSearch.hasPlaceholder(rjUrl)) {
+                        Text(
+                            "주소 안에 RJ값 이라는 글자가 없어요. RJ 번호가 들어갈 자리에 적어 주세요.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                 }
             },
