@@ -62,6 +62,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.LocalView
@@ -400,7 +401,8 @@ fun EditScreen(
     val cTitle = trackMode && title.trim() != iTitle.trim()
     val cTrackNo = trackMode && trackNoText != iTrackNo
     val cAlbum = albumText.trim() != tagAlbum.trim()
-    val cArtist = artistText.trim() != iArtist.trim()
+    val artistFinal = artistText.trim().trimEnd('/').trim()   // 입력 중 끝에 남은 " / " 는 저장할 때 뺀다
+    val cArtist = artistFinal != iArtist.trim()
     val cAlbumArtist = albumArtistText.trim() != iAlbumArtist.trim()
     val cGenre = genreHas || genreText.trim().isNotEmpty()   // 지울 장르가 있거나, 새로 입력했으면 바뀐 것
     val cYear = yearDigits != iYear
@@ -435,7 +437,7 @@ fun EditScreen(
                                 title = if (cTitle) NameCleaner.clean(title) else null,
                                 trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: -1) else null,
                                 album = if (cAlbum) albumText.trim() else null,
-                                artist = if (cArtist) artistText.trim() else null,
+                                artist = if (cArtist) artistFinal else null,
                                 albumArtist = if (cAlbumArtist) albumArtistText.trim() else null,
                                 year = if (cYear) formatYear(yearDigits) else null,
                                 // 빈칸이면 "" -> 장르 프레임 삭제. 화면에 안 보이는 이상한 값도 같이 지워진다
@@ -621,7 +623,7 @@ fun EditScreen(
                         modifier = Modifier.align(Alignment.End)
                     ) { Text("앨범 다수값 불러오기") }
                 }
-                EditField("아티스트", artistText, { artistText = it }, mArtist)
+                ArtistField("아티스트", artistText, { artistText = it }, mArtist)
                 EditField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
 
                 // 연도: 숫자만 입력, 점은 자동
@@ -715,5 +717,138 @@ private fun EditField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+    )
+}
+
+// ----------------------------------------------------------------------
+// 아티스트 입력칸: 이름 사이를 " / " 로 자동 정리
+//  - 띄어쓰기(또는 /)를 치면 " / " 가 들어간다.   A + 스페이스 -> "A / "
+//  - 한 번 붙여넣고 또 붙여넣으면 앞뒤가 자동으로 나뉜다.   "A" 에 "B" 붙여넣기 -> "A / B"
+//  - 지울 때: "A / " 에서 백스페이스를 한 번 누르면 "A" 가 된다.
+// 아티스트 이름 안에 띄어쓰기가 없다는 전제이므로, 이 칸에서 띄어쓰기는 이름 구분으로 취급한다.
+// 처음부터 들어 있던 값은 사용자가 건드리기 전에는 그대로 둔다.
+// ----------------------------------------------------------------------
+
+private fun isSepChar(c: Char): Boolean = c.isWhitespace() || c == '/'
+
+/** 바뀐 입력을 정리한다. 반환: (새 글, 커서 위치). null 이면 손대지 않고 그대로 통과. */
+private fun reformatArtist(old: String, new: String, cursor: Int, clip: () -> String?): Pair<String, Int>? {
+    // 이전 글과 새 글을 비교해 "지워진 부분"과 "들어온 부분"을 찾는다
+    var p = 0
+    val maxP = minOf(old.length, new.length)
+    while (p < maxP && old[p] == new[p]) p++
+    var s = 0
+    val maxS = minOf(old.length, new.length) - p
+    while (s < maxS && old[old.length - 1 - s] == new[new.length - 1 - s]) s++
+    val removed = old.substring(p, old.length - s)
+    val inserted = new.substring(p, new.length - s)
+    val deleting = new.length < old.length
+
+    // 붙여넣기 판단: 한 번에 2글자 이상 들어왔고 클립보드 내용과 같을 때만 (자동완성과 구분)
+    val ins = inserted.trim()
+    val isPaste = ins.length >= 2 && ins == (clip()?.trim() ?: "")
+
+    // 띄어쓰기/슬래시가 오가지도 않고 붙여넣기도 아니면 (일반 글자 입력) 손대지 않는다 (한글 조합 보호)
+    if (!isPaste && !inserted.any { isSepChar(it) } && !removed.any { isSepChar(it) }) return null
+
+    var raw = new
+    var cur = cursor.coerceIn(0, new.length)
+    if (isPaste) {
+        val l = new.substring(0, p)
+        val r = new.substring(new.length - s)
+        val pre = if (l.isNotEmpty() && !isSepChar(l.last())) " " else ""
+        val post = if (r.isNotEmpty() && !isSepChar(r.first())) " " else ""
+        raw = l + pre + inserted + post + r
+        cur = l.length + pre.length + inserted.length
+    }
+
+    // 이름 조각으로 나눠서 " / " 로 다시 잇는다
+    val tokens = ArrayList<String>()
+    val sb = StringBuilder()
+    for (ch in raw) {
+        if (isSepChar(ch)) {
+            if (sb.isNotEmpty()) {
+                tokens.add(sb.toString())
+                sb.setLength(0)
+            }
+        } else {
+            sb.append(ch)
+        }
+    }
+    if (sb.isNotEmpty()) tokens.add(sb.toString())
+    var text = tokens.joinToString(" / ")
+    // 끝에서 띄어쓰기를 쳤으면 다음 이름을 위해 " / " 를 붙여 둔다 (지우는 중에는 붙이지 않음)
+    if (!deleting && tokens.isNotEmpty() && isSepChar(raw.last())) text += " / "
+
+    // 커서: "이름 글자 몇 개 뒤"였는지를 새 글에서 찾는다
+    var k = 0
+    for (i in 0 until cur) if (!isSepChar(raw[i])) k++
+    var pos = 0
+    if (k > 0) {
+        var cnt = 0
+        pos = text.length
+        for (i in text.indices) {
+            if (!isSepChar(text[i])) {
+                cnt++
+                if (cnt == k) {
+                    pos = i + 1
+                    break
+                }
+            }
+        }
+    }
+    if (cur >= raw.length) {
+        pos = text.length
+    } else if (k > 0 && cur > 0 && isSepChar(raw[cur - 1]) && text.startsWith(" / ", pos)) {
+        pos += 3
+    }
+    return text to pos
+}
+
+@Composable
+private fun ArtistField(
+    label: String,
+    value: String,
+    onChange: (String) -> Unit,
+    mixed: Boolean = false
+) {
+    val clipboard = LocalClipboardManager.current
+    var tfv by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+
+    // 바깥에서 값이 바뀌면(예: 버튼으로 채움) 따라간다
+    LaunchedEffect(value) {
+        if (tfv.text != value) tfv = TextFieldValue(value, TextRange(value.length))
+    }
+
+    OutlinedTextField(
+        value = tfv,
+        onValueChange = { nv ->
+            val r = if (nv.text == tfv.text) null
+            else reformatArtist(tfv.text, nv.text, nv.selection.end) { clipboard.getText()?.text }
+            if (r == null) {
+                tfv = nv
+                onChange(nv.text)
+            } else {
+                tfv = TextFieldValue(r.first, TextRange(r.second))
+                onChange(r.first)
+            }
+        },
+        label = { Text(label) },
+        placeholder = { if (mixed) Text("여러 값 · 그대로 두면 변경 안 함") },
+        singleLine = true,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .onFocusChanged { f ->
+                // 칸을 벗어날 때 끝에 남은 " / " 는 지운다
+                if (!f.isFocused) {
+                    val t = tfv.text
+                    val c = t.trimEnd { isSepChar(it) }
+                    if (c != t) {
+                        tfv = TextFieldValue(c, TextRange(c.length))
+                        onChange(c)
+                    }
+                }
+            }
     )
 }
