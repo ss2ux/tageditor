@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 7단계: 파일명 맨 앞의 숫자로 트랙번호를 알아내는 도구.
- * - 접두어(tr, track, 트랙, t)가 있으면 뒤에 숫자만 와도 인식: track1, 트랙 2, t3
+ * - 접두어(tr, track, 트랙, トラック, t)가 있으면 뒤에 숫자만 와도 인식: track1, 트랙 2, t3
  * - 1a, 1B, 1c 처럼 숫자 뒤에 영문 한 글자가 붙은 것도 그 숫자(1)로 인식
  * - 맨 앞에 #(또는 # 와 공백)이 있어도 없는 것처럼 똑같이 처리: #1, #1-A, #1-b -> 1
  * - 2-A, 2-B, 3_a, 2 - A, 2–B(긴 하이픈) 처럼 숫자 뒤에 구분 기호(- _ .)와 영문 한 글자도 그 숫자(2)로 인식
@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
  */
 object TrackNumbering {
     private val withPrefix =
-        Regex("""^(?:tr(?:ack)?|트랙|t)\s*0*(\d{1,3})[A-Za-z]?(?=[\s_\-.]|$)""", RegexOption.IGNORE_CASE)
+        Regex("""^(?:tr(?:ack)?|트랙|トラック|ﾄﾗｯｸ|t)\s*0*(\d{1,3})[A-Za-z]?(?=[\s_\-.]|$)""", RegexOption.IGNORE_CASE)
     private val plainNumber = Regex("""^0*(\d{1,3})(?:[_\-.]|$)""")
     // 1a, 1B, 02c 처럼 숫자 바로 뒤에 영문 한 글자: 모두 그 숫자 트랙으로 본다 (뒤에는 공백/_/-/. 또는 끝)
     private val numberLetter = Regex("""^0*(\d{1,3})[A-Za-z](?=[\s_\-.]|$)""")
@@ -33,7 +33,11 @@ object TrackNumbering {
 
     fun parse(fileName: String): Int? {
         // 맨 앞의 # (＃ 포함)은 없는 것으로 본다: #1 -> 1, #1-A -> 1, # 2_b -> 2
-        val name = fileName.substringBeforeLast('.').trim().trimStart('#', '\uFF03', ' ', '\t')
+        val raw = fileName.substringBeforeLast('.').trim().trimStart('#', '\uFF03', ' ', '\t')
+        // 전각 숫자(１２３)는 일반 숫자로 바꿔서 본다
+        val name = buildString {
+            for (ch in raw) append(if (ch in '\uFF10'..'\uFF19') ('0' + (ch - '\uFF10')) else ch)
+        }
         val m = withPrefix.find(name) ?: plainNumber.find(name) ?: numberLetter.find(name)
             ?: numberSepLetter.find(name) ?: return null
         return m.groupValues[1].toIntOrNull()?.takeIf { it >= 0 }
