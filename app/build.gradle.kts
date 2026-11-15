@@ -55,4 +55,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.core:core-ktx:1.13.1")
+    // 일본어 음차: 한자를 일본어 발음으로 바꾸는 형태소 분석기 (사전 포함, 앱이 10~20MB 커짐)
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
 }
