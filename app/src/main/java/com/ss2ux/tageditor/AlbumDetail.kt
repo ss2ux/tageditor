@@ -95,7 +95,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     }
 
     // 저장 공통 처리: 권한 확인 -> 진행 표시 -> 저장 -> 화면/캐시 새로 읽기
-    fun startSave(total: Int, work: ((Int, Int) -> Unit) -> SaveResult) {
+    fun startSave(total: Int, renameTo: String? = null, work: ((Int, Int) -> Unit) -> SaveResult) {
         if (saveProgress != null) {
             // 이미 저장 중
         } else if (!TagSaver.hasAllFilesAccess()) {
@@ -106,6 +106,14 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 val r = withContext(Dispatchers.IO) {
                     work { done, all -> saveProgress = done to all }
                 }
+                // 폴더명 바꾸기를 골랐고 태그가 하나라도 저장됐으면, 폴더 이름을 바꾸고 스캔까지 끝낸다
+                var renamedKey: String? = null
+                var renameError: String? = null
+                if (r.ok > 0 && renameTo != null) {
+                    val fr = withContext(Dispatchers.IO) { FolderRename.rename(ctx, album, renameTo) }
+                    renamedKey = fr.newKey
+                    renameError = fr.error
+                }
                 // 옛 값/옛 이미지를 버리고 새로 읽는다
                 AlbumTagLoader.invalidate()
                 ThumbCache.clear()
@@ -114,12 +122,24 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 if (r.ok > 0) editing = false
                 val msg = if (r.failed.isEmpty()) "${r.ok}곡 저장 완료"
                 else "${r.ok}곡 저장, ${r.failed.size}곡 실패\n" + r.failed.take(3).joinToString("\n")
-                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                val fullMsg = when {
+                    renamedKey != null -> msg + "\n폴더명 변경: " + renameTo
+                    renameError != null -> msg + "\n폴더명 변경 실패: " + renameError
+                    else -> msg
+                }
+                Toast.makeText(ctx, fullMsg, Toast.LENGTH_LONG).show()
                 if (r.ok > 0) {
                     NewSeen.mark(ctx, album.key)   // 수정했으니 목록의 NEW 표시를 끔
-                    RefreshBus.tick.intValue++   // 목록과 썸네일도 새로 읽게 함
-                    tags = withContext(Dispatchers.IO) { AlbumTagLoader.load(ctx, album) }
-                    LargeArt.load(ctx, album)?.let { art = it }
+                    if (renamedKey != null) {
+                        // 폴더가 바뀌었으니 목록을 다시 읽고, 새 폴더의 이 앨범을 다시 연다
+                        NewSeen.mark(ctx, renamedKey)
+                        ReopenRequest.key = renamedKey
+                        RefreshBus.tick.intValue++
+                    } else {
+                        RefreshBus.tick.intValue++   // 목록과 썸네일도 새로 읽게 함
+                        tags = withContext(Dispatchers.IO) { AlbumTagLoader.load(ctx, album) }
+                        LargeArt.load(ctx, album)?.let { art = it }
+                    }
                 }
             }
         }
@@ -347,7 +367,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
             currentArt = art,
             onClose = { editing = false },
             onSave = { req ->
-                startSave(req.trackIds.size) { p -> TagSaver.save(ctx, album, req, p) }
+                startSave(req.trackIds.size, req.renameFolder) { p -> TagSaver.save(ctx, album, req, p) }
             }
         )
     }

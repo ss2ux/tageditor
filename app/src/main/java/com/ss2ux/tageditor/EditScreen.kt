@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -102,7 +103,8 @@ data class EditRequest(
     val albumArtist: String? = null,
     val year: String? = null,
     val genre: String? = null,
-    val artJpeg: ByteArray? = null   // 1500x1500 JPEG
+    val artJpeg: ByteArray? = null,  // 1500x1500 JPEG
+    val renameFolder: String? = null // 저장 후 앨범 폴더를 이 이름으로 바꿈 (null = 안 바꿈)
 ) {
     fun changedNames(): List<String> = buildList {
         if (title != null) add("트랙명")
@@ -219,6 +221,14 @@ fun EditScreen(
     val tagAlbum = if (trackMode) (tTag?.album ?: "") else if (tags.album.mixed) "" else tags.album.value
     // 화면에 처음 보여 줄 값: 앨범 모드에서는 RJ번호를 뺀 값, 비어 있거나 곡마다 다르면 폴더명
     // (보여 주는 값이 실제 태그와 다르면 "바뀐 것"으로 쳐서 저장할 때 모든 곡에 실제로 써 넣는다)
+    // 폴더명 바꾸기(앨범 모드, RJ 폴더일 때만): 폴더의 RJ번호와 "폴더에 한 앨범만 있는지"를 본다
+    val rawFolderName = remember(album) {
+        val p = album.path.trimEnd('/')
+        if ('/' !in p) "" else p.substringAfterLast('/')
+    }
+    val rjCode = remember(rawFolderName) { RjSearch.extract(rawFolderName) }
+    val canRenameFolder = !trackMode && rjCode != null && rawFolderName.isNotBlank()
+    var renameChecked by remember { mutableStateOf(FolderPrefs.renameOnSave(ctx)) }
     val iAlbum = if (trackMode) tagAlbum else stripRj(tagAlbum).ifBlank { folderName }
     val iArtist = if (trackMode) (tTag?.artist ?: "") else if (tags.artist.mixed) "" else tags.artist.value
     val iAlbumArtist =
@@ -414,7 +424,10 @@ fun EditScreen(
     val cGenre = genreHas || genreText.trim().isNotEmpty()   // 지울 장르가 있거나, 새로 입력했으면 바뀐 것
     val cYear = yearDigits != iYear
     val anyChange = cTitle || cTrackNo || cAlbum || cArtist || cAlbumArtist || cGenre || cYear || newArt != null
-    val canSave = anyChange && yearOk && !artBusy
+    // 바꿀 폴더 이름 = 앨범 입력칸의 제목 + 공백 + RJ번호
+    val folderTarget = if (canRenameFolder && rjCode != null) FolderRename.buildName(albumText, rjCode) else ""
+    val folderRenameOn = canRenameFolder && renameChecked && folderTarget.isNotBlank() && folderTarget != rawFolderName
+    val canSave = (anyChange || folderRenameOn) && yearOk && !artBusy
 
     BackHandler(enabled = pendingBitmap == null) { if (anyChange) confirmDiscard = true else onClose() }
 
@@ -448,7 +461,8 @@ fun EditScreen(
                                 year = if (cYear) formatYear(yearDigits) else null,
                                 // 빈칸이면 "" -> 장르 프레임 삭제. 화면에 안 보이는 이상한 값도 같이 지워진다
                                 genre = genreText.trim(),
-                                artJpeg = newArt?.jpeg
+                                artJpeg = newArt?.jpeg,
+                                renameFolder = if (folderRenameOn) folderTarget else null
                         )
                         // 치환 규칙 적용: 바뀐 게 있으면 작은 알림으로 알려 준다
                         val (converted, ruleChanges) = TagRules.applyTo(ctx, built)
@@ -615,6 +629,50 @@ fun EditScreen(
                         onClick = { albumText = folderName },
                         modifier = Modifier.align(Alignment.End)
                     ) { Text("폴더명으로: $folderName", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+                if (canRenameFolder && rjCode != null) {
+                    // 폴더명 바꾸기: RJ 검색 -> 제목 복사 -> 돌아와서 붙여넣기 -> 저장하면 "제목 RJ번호" 폴더로 변경
+                    TextButton(
+                        onClick = {
+                            val clip = clipboard.getText()?.text?.replace('\n', ' ')?.trim() ?: ""
+                            if (clip.isEmpty()) {
+                                Toast.makeText(ctx, "클립보드가 비어 있어요", Toast.LENGTH_SHORT).show()
+                            } else {
+                                albumText = clip
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) { Text("클립보드 내용을 앨범명으로") }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                renameChecked = !renameChecked
+                                FolderPrefs.setRenameOnSave(ctx, renameChecked)
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = renameChecked,
+                            onCheckedChange = {
+                                renameChecked = it
+                                FolderPrefs.setRenameOnSave(ctx, it)
+                            }
+                        )
+                        Text("저장할 때 폴더명도 바꾸기", fontSize = 14.sp)
+                    }
+                    if (renameChecked) {
+                        Text(
+                            when {
+                                folderTarget.isBlank() -> "앨범명을 입력하면 폴더명이 정해져요"
+                                folderTarget == rawFolderName -> "폴더명이 이미 같아요 · 바뀌지 않아요"
+                                else -> "$rawFolderName\n→ $folderTarget"
+                            },
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 12.dp, bottom = 4.dp)
+                        )
+                    }
                 }
                 if (trackMode && (artistMajor.isNotEmpty() || albumArtistMajor.isNotEmpty() || yearMajor.isNotEmpty())) {
                     Text(

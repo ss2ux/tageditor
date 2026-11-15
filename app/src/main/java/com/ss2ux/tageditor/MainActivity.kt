@@ -204,6 +204,11 @@ fun LibraryScreen() {
     // 자동: 폴더 설정이 바뀌거나 앱으로 돌아올 때. 새 파일은 Download 에만 생기므로 거기만 훑는다 (표시 없음)
     LaunchedEffect(folders, resumeTick.intValue, RefreshBus.tick.intValue) {
         refresh(setOf("Download"))
+        // 폴더명을 바꾼 직후라면, 새 폴더의 그 앨범을 다시 연다
+        ReopenRequest.key?.let { k ->
+            ReopenRequest.key = null
+            if (albums.any { it.key == k }) openKey = k
+        }
     }
     // 수동: 새로고침 버튼. 선택한 폴더 전체를 훑고, 버튼 자리에 작은 빙글이를 표시
     LaunchedEffect(manualTick) {
