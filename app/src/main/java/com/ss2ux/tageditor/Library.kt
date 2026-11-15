@@ -107,7 +107,7 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
         Album(
             key = key,
             path = path,
-            name = albumName,
+            name = NameCleaner.clean(albumName).ifBlank { albumName },
             artist = mostCommon(rows.map { it.artist }) ?: "알 수 없는 아티스트",
             addedAt = rows.maxOf { it.added },
             tracks = tracks

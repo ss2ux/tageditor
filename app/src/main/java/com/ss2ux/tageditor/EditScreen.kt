@@ -229,7 +229,7 @@ fun EditScreen(
     val rjCode = remember(rawFolderName) { RjSearch.extract(rawFolderName) }
     val canRenameFolder = !trackMode && rjCode != null && rawFolderName.isNotBlank()
     var renameChecked by remember { mutableStateOf(FolderPrefs.renameOnSave(ctx)) }
-    val iAlbum = if (trackMode) tagAlbum else stripRj(tagAlbum).ifBlank { folderName }
+    val iAlbum = NameCleaner.clean(if (trackMode) tagAlbum else stripRj(tagAlbum).ifBlank { folderName })
     val iArtist = if (trackMode) (tTag?.artist ?: "") else if (tags.artist.mixed) "" else tags.artist.value
     val iAlbumArtist =
         if (trackMode) (tTag?.albumArtist ?: "") else if (tags.albumArtist.mixed) "" else tags.albumArtist.value
@@ -424,8 +424,12 @@ fun EditScreen(
     val cGenre = genreHas || genreText.trim().isNotEmpty()   // 지울 장르가 있거나, 새로 입력했으면 바뀐 것
     val cYear = yearDigits != iYear
     val anyChange = cTitle || cTrackNo || cAlbum || cArtist || cAlbumArtist || cGenre || cYear || newArt != null
-    // 바꿀 폴더 이름 = 앨범 입력칸의 제목 + 공백 + RJ번호
-    val folderTarget = if (canRenameFolder && rjCode != null) FolderRename.buildName(albumText, rjCode) else ""
+    // 바꿀 폴더 이름 = 앨범 입력칸의 제목(치환 규칙 적용) + 공백 + RJ번호
+    // 앨범 태그는 저장할 때 치환 규칙이 적용되므로, 폴더명도 같은 규칙을 거쳐서 둘이 같게 맞춘다
+    val ruleEngine = remember { TagRuleEngine(TagRules.load(ctx), TagRules.fixJosa(ctx)) }
+    val folderTarget = if (canRenameFolder && rjCode != null) {
+        FolderRename.buildName(NameCleaner.clean(ruleEngine.clean(albumText.trim())), rjCode)
+    } else ""
     val folderRenameOn = canRenameFolder && renameChecked && folderTarget.isNotBlank() && folderTarget != rawFolderName
     val canSave = (anyChange || folderRenameOn) && yearOk && !artBusy
 
@@ -455,7 +459,7 @@ fun EditScreen(
                                 trackIds = if (track != null) listOf(track.id) else album.tracks.map { it.id },
                                 title = if (cTitle) NameCleaner.clean(title) else null,
                                 trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: -1) else null,
-                                album = if (cAlbum) albumText.trim() else null,
+                                album = if (cAlbum) NameCleaner.clean(albumText) else null,
                                 artist = if (cArtist) artistFinal else null,
                                 albumArtist = if (cAlbumArtist) albumArtistText.trim() else null,
                                 year = if (cYear) formatYear(yearDigits) else null,
