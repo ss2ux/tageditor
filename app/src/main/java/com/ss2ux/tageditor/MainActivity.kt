@@ -174,6 +174,7 @@ fun LibraryScreen() {
     val ctx = LocalContext.current
     var includeMusic by remember { mutableStateOf(Prefs.includeMusic(ctx)) }
     var rjUrl by remember { mutableStateOf(Prefs.rjUrl(ctx)) }
+    var showRules by remember { mutableStateOf(false) }
     var albums by remember { mutableStateOf<List<Album>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var loadMs by remember { mutableStateOf(-1L) }
@@ -361,10 +362,32 @@ fun LibraryScreen() {
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+                    // --- 치환 규칙 ---
+                    Text("치환 규칙", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "저장할 때 입력한 값에서 틀리게 번역된 말 등을 자동으로 바꿔요. 바뀐 내용은 알림으로 알려 줘요.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                    TextButton(
+                        onClick = {
+                            showSettings = false
+                            showRules = true
+                        },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) { Text("규칙 관리") }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("닫기") } }
         )
+    }
+
+    if (showRules) {
+        TagRulesDialog(onClose = { showRules = false })
     }
 
     // 앨범 상세 화면: 목록 위에 덮어서 표시 (닫으면 목록의 스크롤 위치/검색어가 그대로 남음)

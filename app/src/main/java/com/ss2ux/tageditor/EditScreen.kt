@@ -438,8 +438,7 @@ fun EditScreen(
                 TextButton(
                     enabled = canSave,
                     onClick = {
-                        onSave(
-                            EditRequest(
+                        val built = EditRequest(
                                 trackIds = if (track != null) listOf(track.id) else album.tracks.map { it.id },
                                 title = if (cTitle) NameCleaner.clean(title) else null,
                                 trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: -1) else null,
@@ -450,8 +449,11 @@ fun EditScreen(
                                 // 빈칸이면 "" -> 장르 프레임 삭제. 화면에 안 보이는 이상한 값도 같이 지워진다
                                 genre = genreText.trim(),
                                 artJpeg = newArt?.jpeg
-                            )
                         )
+                        // 치환 규칙 적용: 바뀐 게 있으면 작은 알림으로 알려 준다
+                        val (converted, ruleChanges) = TagRules.applyTo(ctx, built)
+                        TagRules.notifyChanges(ctx, ruleChanges)
+                        onSave(converted)
                     }
                 ) { Text("저장", fontSize = 16.sp) }
             }
