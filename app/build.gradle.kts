@@ -19,6 +19,21 @@ android {
     namespace = "com.ss2ux.tageditor"
     compileSdk = 34
 
+    // kuromoji 두 조각이 같은 이름의 안내 문서 파일을 갖고 있어서 하나만 남긴다
+    packaging {
+        resources {
+            pickFirsts += setOf(
+                "META-INF/CONTRIBUTORS.md",
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE",
+                "META-INF/NOTICE.md",
+                "META-INF/NOTICE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE.txt"
+            )
+        }
+    }
+
     defaultConfig {
         applicationId = "com.ss2ux.tageditor"
         minSdk = 29
