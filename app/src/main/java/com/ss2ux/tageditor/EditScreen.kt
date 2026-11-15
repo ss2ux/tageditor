@@ -576,6 +576,7 @@ fun EditScreen(
                         enabled = title.isNotEmpty(),
                         modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
                     ) { Text("트랙명 지우기") }
+                    JpHint(title)
                     CompositionLocalProvider(LocalTextToolbar provides toolbar) {
                     OutlinedTextField(
                         value = titleTv,
@@ -607,6 +608,7 @@ fun EditScreen(
                         keyboardType = KeyboardType.Number
                     )
                 }
+                JpHint(albumText)
                 EditField("앨범", albumText, { albumText = it }, mAlbum)
                 if (!trackMode && folderName.isNotBlank() && albumText != folderName) {
                     TextButton(
@@ -632,7 +634,9 @@ fun EditScreen(
                         modifier = Modifier.align(Alignment.End)
                     ) { Text("앨범 다수값 불러오기") }
                 }
+                JpHint(artistText)
                 ArtistField("아티스트", artistText, { artistText = it }, mArtist)
+                JpHint(albumArtistText)
                 // 한 글자 이상 적으면, 이미 있는 아티스트 이름 중 비슷한 것을 작게 추천한다
                 val aaQuery = albumArtistText.trim()
                 if (aaQuery.isNotEmpty()) {
