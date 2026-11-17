@@ -426,7 +426,8 @@ fun EditScreen(
     val anyChange = cTitle || cTrackNo || cAlbum || cArtist || cAlbumArtist || cGenre || cYear || newArt != null
     // 바꿀 폴더 이름 = 앨범 입력칸의 제목(치환 규칙 적용) + 공백 + RJ번호
     // 앨범 태그는 저장할 때 치환 규칙이 적용되므로, 폴더명도 같은 규칙을 거쳐서 둘이 같게 맞춘다
-    val ruleEngine = remember { TagRuleEngine(TagRules.load(ctx), TagRules.fixJosa(ctx)) }
+    // 규칙·제외 단어·조사 보정 설정이 바뀌면 다음 재구성 때 엔진이 새로 만들어진다
+    val ruleEngine = TagRuleEngine(TagRules.load(ctx), TagRules.fixJosa(ctx), TagRules.protect(ctx))
     val folderTarget = if (canRenameFolder && rjCode != null) {
         FolderRename.buildName(NameCleaner.clean(ruleEngine.clean(albumText.trim())), rjCode)
     } else ""
