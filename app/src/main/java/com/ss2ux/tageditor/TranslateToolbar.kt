@@ -10,13 +10,16 @@ import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 
 /**
- * 글자를 길게 눌렀을 때 뜨는 메뉴(잘라내기/복사/붙여넣기/모두 선택)에
- * "DeepL 번역" 항목을 하나 더 붙인 텍스트 메뉴.
- * onTranslate 가 null 이면 번역 항목은 보이지 않는다.
+ * 글자를 길게 눌렀을 때 뜨는 메뉴에 DeepL / Google 번역 항목을 붙인다.
  */
 class TranslateTextToolbar(private val view: View) : TextToolbar {
 
-    var onTranslate: (() -> Unit)? = null
+    var onTranslateDeepl: (() -> Unit)? = null
+    var onTranslateGoogle: (() -> Unit)? = null
+
+    var onTranslate: (() -> Unit)?
+        get() = onTranslateDeepl
+        set(value) { onTranslateDeepl = value }
 
     private var actionMode: ActionMode? = null
     private var rect: Rect = Rect.Zero
@@ -61,10 +64,11 @@ class TranslateTextToolbar(private val view: View) : TextToolbar {
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
         if (onCut != null) menu.add(0, ID_CUT, 2, android.R.string.cut)
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        // 순서: 복사 / 붙여넣기 / 잘라내기 / DeepL 번역 / 모두 선택
-        if (onTranslate != null) menu.add(0, ID_TRANSLATE, 3, "DeepL 번역")
+        if (onTranslateDeepl != null) menu.add(0, ID_DEEPL, 3, "DeepL 번역")
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        if (onSelectAll != null) menu.add(0, ID_SELECT_ALL, 4, android.R.string.selectAll)
+        if (onTranslateGoogle != null) menu.add(0, ID_GOOGLE, 4, "Google 번역")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+        if (onSelectAll != null) menu.add(0, ID_SELECT_ALL, 5, android.R.string.selectAll)
             .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
     }
 
@@ -86,7 +90,8 @@ class TranslateTextToolbar(private val view: View) : TextToolbar {
                 ID_PASTE -> onPaste?.invoke()
                 ID_CUT -> onCut?.invoke()
                 ID_SELECT_ALL -> onSelectAll?.invoke()
-                ID_TRANSLATE -> onTranslate?.invoke()
+                ID_DEEPL -> onTranslateDeepl?.invoke()
+                ID_GOOGLE -> onTranslateGoogle?.invoke()
             }
             mode.finish()
             return true
@@ -106,7 +111,8 @@ class TranslateTextToolbar(private val view: View) : TextToolbar {
         const val ID_COPY = 1
         const val ID_PASTE = 2
         const val ID_CUT = 3
-        const val ID_SELECT_ALL = 4
-        const val ID_TRANSLATE = 5
+        const val ID_SELECT_ALL = 5
+        const val ID_DEEPL = 6
+        const val ID_GOOGLE = 7
     }
 }

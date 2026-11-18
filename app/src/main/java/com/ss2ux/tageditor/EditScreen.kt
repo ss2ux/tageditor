@@ -1,8 +1,10 @@
 package com.ss2ux.tageditor
 
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.view.inputmethod.InputMethodManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,6 +16,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -268,23 +272,64 @@ fun EditScreen(
     val toolbar = remember(view) { TranslateTextToolbar(view) }
     val clipboard = LocalClipboardManager.current
 
-    // ---- DeepL 번역 ----
-    // 이미 깔려 있는 DeepL 앱의 "텍스트 처리(PROCESS_TEXT)" 창을 띄운다.
-    // DeepL 창에서 "바꾸기"처럼 결과를 돌려주면 선택했던 부분을 번역문으로 바꿔 넣는다.
+    // ---- DeepL / Google 번역 ----
+    // PROCESS_TEXT 결과 또는 (번역 시작 이후 바뀐) 클립보드로 선택 구간을 교체한다.
+    // 예전에 복사해 둔 클립보드는 시작 시점 스냅샷과 같으면 무시한다.
     var translateRange by remember { mutableStateOf<TextRange?>(null) }
-    val translateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val out = result.data?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
-        val r = translateRange
-        if (result.resultCode == Activity.RESULT_OK && !out.isNullOrBlank() && r != null) {
-            val t = titleTv
-            val a = r.min.coerceIn(0, t.text.length)
-            val b = r.max.coerceIn(a, t.text.length)
-            val rep = out.replace('\n', ' ')
-            titleTv = TextFieldValue(t.text.substring(0, a) + rep + t.text.substring(b), TextRange(a + rep.length))
+    var translateSource by remember { mutableStateOf<String?>(null) }
+    var clipboardAtLaunch by remember { mutableStateOf<String?>(null) }
+
+    fun readClipboardSys(): String? {
+        return try {
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = cm.primaryClip ?: return null
+            if (clip.itemCount <= 0) return null
+            clip.getItemAt(0).coerceToText(ctx)?.toString()?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
         }
-        translateRange = null
     }
-    fun startTranslate() {
+
+    fun applyTitleTranslation(out: String, r: TextRange): Boolean {
+        if (out.isBlank()) return false
+        val t = titleTv
+        val a = r.min.coerceIn(0, t.text.length)
+        val b = r.max.coerceIn(a, t.text.length)
+        val rep = out.replace('\n', ' ')
+        titleTv = TextFieldValue(t.text.substring(0, a) + rep + t.text.substring(b), TextRange(a + rep.length))
+        return true
+    }
+
+    fun tryApplyTitleTranslation(processText: String?) {
+        val r = translateRange ?: return
+        val src = translateSource
+        val snap = clipboardAtLaunch
+        val fromResult = processText?.takeIf { it.isNotBlank() }
+        val fromClip = readClipboardSys()
+        // 클립보드는 (1) 원문과 다르고 (2) 번역 시작 전 클립보드와도 다를 때만 사용
+        // → 예전에 복사해 둔 글이 잘못 들어가지 않음. 복사 없이 나오면 아무것도 안 함.
+        val out = when {
+            !fromResult.isNullOrBlank() -> fromResult
+            !fromClip.isNullOrBlank() && fromClip != src && fromClip != snap -> fromClip
+            else -> null
+        }
+        if (out != null && applyTitleTranslation(out, r)) {
+            Toast.makeText(ctx, "번역문을 반영했어요", Toast.LENGTH_SHORT).show()
+            translateRange = null
+            translateSource = null
+            clipboardAtLaunch = null
+        }
+    }
+
+    val translateLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val out = result.data?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+        tryApplyTitleTranslation(out)
+        if (translateRange != null) tryApplyTitleTranslation(null)
+    }
+
+    fun startTranslate(engine: String) {
         val t = titleTv
         // 선택한 글자가 없으면 트랙명 전체를 번역
         val sel = if (t.selection.collapsed) TextRange(0, t.text.length) else t.selection
@@ -294,15 +339,30 @@ fun EditScreen(
             return
         }
         val pm = ctx.packageManager
-        fun isDeepl(ri: android.content.pm.ResolveInfo) =
-            ri.activityInfo.packageName.contains("deepl", ignoreCase = true) ||
-                ri.loadLabel(pm).toString().contains("deepl", ignoreCase = true)
+        fun matches(ri: android.content.pm.ResolveInfo): Boolean {
+            val pkg = ri.activityInfo.packageName
+            val label = ri.loadLabel(pm).toString()
+            return when (engine) {
+                "deepl" ->
+                    pkg.contains("deepl", true) || label.contains("deepl", true)
+                else ->
+                    pkg.contains("google.android.apps.translate", true) ||
+                        pkg.contains("google.translate", true) ||
+                        (label.contains("Google", true) && label.contains("번역", true)) ||
+                        (label.contains("Google", true) && label.contains("Translate", true)) ||
+                        label.equals("Translate", true)
+            }
+        }
+        val engineName = if (engine == "deepl") "DeepL" else "Google 번역"
         try {
-            // 1순위: 텍스트 선택 메뉴용 창 (결과를 돌려받아 바로 바꿔 넣을 수 있음)
-            val pt = pm.queryIntentActivities(Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain"), 0)
-                .firstOrNull { isDeepl(it) }
+            translateRange = sel
+            translateSource = src
+            clipboardAtLaunch = readClipboardSys() // 예전 복사본 스냅샷
+            val pt = pm.queryIntentActivities(
+                Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain"),
+                PackageManager.MATCH_DEFAULT_ONLY
+            ).firstOrNull { matches(it) }
             if (pt != null) {
-                translateRange = sel
                 translateLauncher.launch(
                     Intent(Intent.ACTION_PROCESS_TEXT)
                         .setClassName(pt.activityInfo.packageName, pt.activityInfo.name)
@@ -310,11 +370,13 @@ fun EditScreen(
                         .putExtra(Intent.EXTRA_PROCESS_TEXT, src)
                         .putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false)
                 )
+                Toast.makeText(ctx, "번역 후 복사하면 돌아와 자동 반영돼요", Toast.LENGTH_SHORT).show()
                 return
             }
-            // 2순위: 공유 창 (번역문은 DeepL 화면에서 복사해서 붙여넣어야 함)
-            val sd = pm.queryIntentActivities(Intent(Intent.ACTION_SEND).setType("text/plain"), 0)
-                .firstOrNull { isDeepl(it) }
+            val sd = pm.queryIntentActivities(
+                Intent(Intent.ACTION_SEND).setType("text/plain"),
+                PackageManager.MATCH_DEFAULT_ONLY
+            ).firstOrNull { matches(it) }
             if (sd != null) {
                 ctx.startActivity(
                     Intent(Intent.ACTION_SEND)
@@ -323,17 +385,27 @@ fun EditScreen(
                         .putExtra(Intent.EXTRA_TEXT, src)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
-                Toast.makeText(ctx, "번역문은 DeepL에서 복사한 뒤 붙여넣어 주세요", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "번역문을 복사한 뒤 돌아오면 자동 반영돼요", Toast.LENGTH_LONG).show()
                 return
             }
-            Toast.makeText(ctx, "DeepL 앱을 찾지 못했어요. 설치되어 있는지 확인해 주세요", Toast.LENGTH_LONG).show()
+            translateRange = null
+            translateSource = null
+            clipboardAtLaunch = null
+            Toast.makeText(ctx, "$engineName 앱을 찾지 못했어요", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             translateRange = null
-            Toast.makeText(ctx, "DeepL을 열지 못했어요", Toast.LENGTH_SHORT).show()
+            translateSource = null
+            clipboardAtLaunch = null
+            Toast.makeText(ctx, "$engineName 을(를) 열지 못했어요", Toast.LENGTH_SHORT).show()
         }
     }
-    // 메뉴에서 번역을 눌렀을 때 항상 최신 트랙명으로 실행되도록 매번 연결해 둔다
-    SideEffect { toolbar.onTranslate = { startTranslate() } }
+    SideEffect {
+        toolbar.onTranslateDeepl = { startTranslate("deepl") }
+        toolbar.onTranslateGoogle = { startTranslate("google") }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (translateRange != null) tryApplyTitleTranslation(null)
+    }
     LaunchedEffect(Unit) {
         if (trackMode) {
             try {
