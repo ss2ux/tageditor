@@ -131,7 +131,9 @@ private fun saveEach(
     val failed = ArrayList<String>()
 
     targets.forEachIndexed { i, t ->
-        val f = File(base, album.path + t.displayName)
+        // 하위 폴더 묶기 시 트랙이 하위에 있을 수 있으므로 relPath 우선
+        val rel = if (t.relPath.isNotEmpty()) t.relPath else album.path + t.displayName
+        val f = File(base, rel)
         try {
             if (!f.name.endsWith(".mp3", ignoreCase = true)) {
                 throw IOException("mp3 파일만 수정할 수 있어요")

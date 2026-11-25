@@ -81,12 +81,22 @@ object FolderRename {
             return FolderRenameResult(null, "이름을 바꾸지 못했어요 (권한이나 이름을 확인해 주세요)")
         }
 
-        // 옛 경로(사라진 항목 정리) + 새 경로(새 항목 등록)를 스캔하고 끝날 때까지 기다린다
+        // 옛 경로(사라진 항목 정리) + 새 경로(새 항목 등록)를 스캔하고 끝날 때까지 기다린다.
+        // 하위 폴더 묶기 시 트랙이 disc1/ 등 하위에 있을 수 있으므로 relPath 기준으로 매핑한다.
         try {
             val paths = ArrayList<String>()
+            val oldPrefix = rel + "/"
+            val newRel = rel.substringBeforeLast('/') + "/" + name
+            val newPrefix = newRel + "/"
             for (t in album.tracks) {
-                paths.add(File(oldDir, t.displayName).absolutePath)
-                paths.add(File(newDir, t.displayName).absolutePath)
+                val oldRelFile = if (t.relPath.isNotEmpty()) t.relPath else oldPrefix + t.displayName
+                val newRelFile = if (oldRelFile.startsWith(oldPrefix)) {
+                    newPrefix + oldRelFile.removePrefix(oldPrefix)
+                } else {
+                    newPrefix + t.displayName
+                }
+                paths.add(File(base, oldRelFile).absolutePath)
+                paths.add(File(base, newRelFile).absolutePath)
             }
             if (paths.isNotEmpty()) {
                 val latch = CountDownLatch(paths.size)

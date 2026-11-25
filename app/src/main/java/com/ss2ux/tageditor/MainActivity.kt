@@ -99,6 +99,14 @@ object Prefs {
     fun includeMusic(c: Context) = sp(c).getBoolean("includeMusic", false)
     fun setIncludeMusic(c: Context, v: Boolean) = sp(c).edit().putBoolean("includeMusic", v).apply()
 
+    /**
+     * 하위 폴더를 하나의 앨범으로 묶기.
+     * ON: Download/앨범명/disc1/ 과 disc2/ 를 하나의 "앨범명" 앨범으로 합쳐서 작업한다.
+     * OFF(기본): 하위 폴더마다 별도 앨범으로 나눈다.
+     */
+    fun groupSubfolders(c: Context) = sp(c).getBoolean("groupSubfolders", false)
+    fun setGroupSubfolders(c: Context, v: Boolean) = sp(c).edit().putBoolean("groupSubfolders", v).apply()
+
     /** RJ 검색 주소 (RJ 번호가 들어갈 자리를 "RJ값" 이라고 적은 주소) */
     fun rjUrl(c: Context): String = sp(c).getString("rjUrl", "") ?: ""
     fun setRjUrl(c: Context, v: String) = sp(c).edit().putString("rjUrl", v).apply()
@@ -173,6 +181,7 @@ fun AppRoot() {
 fun LibraryScreen() {
     val ctx = LocalContext.current
     var includeMusic by remember { mutableStateOf(Prefs.includeMusic(ctx)) }
+    var groupSubfolders by remember { mutableStateOf(Prefs.groupSubfolders(ctx)) }
     var rjUrl by remember { mutableStateOf(Prefs.rjUrl(ctx)) }
     var showRules by remember { mutableStateOf(false) }
     var albums by remember { mutableStateOf<List<Album>>(emptyList()) }
@@ -192,17 +201,20 @@ fun LibraryScreen() {
     // 목록을 DB에서 즉시 불러오고, scanFolders 안에서만 새 파일을 찾는다
     suspend fun refresh(scanFolders: Set<String>) {
         val t0 = System.nanoTime()
-        albums = withContext(Dispatchers.IO) { queryAlbums(ctx, folders) }
+        albums = withContext(Dispatchers.IO) { queryAlbums(ctx, folders, groupSubfolders) }
         loadMs = (System.nanoTime() - t0) / 1_000_000
 
+        // 실제 파일 상대경로로 known 구성 (하위 폴더 묶기 시에도 스캔이 맞도록)
         val known = HashSet<String>()
-        for (a in albums) for (t in a.tracks) known.add(a.path + t.displayName)
+        for (a in albums) for (t in a.tracks) {
+            known.add(if (t.relPath.isNotEmpty()) t.relPath else a.path + t.displayName)
+        }
         val found = withContext(Dispatchers.IO) { scanNewAudio(ctx, scanFolders, known) }
-        if (found > 0) albums = withContext(Dispatchers.IO) { queryAlbums(ctx, folders) }
+        if (found > 0) albums = withContext(Dispatchers.IO) { queryAlbums(ctx, folders, groupSubfolders) }
     }
 
-    // 자동: 폴더 설정이 바뀌거나 앱으로 돌아올 때. 새 파일은 Download 에만 생기므로 거기만 훑는다 (표시 없음)
-    LaunchedEffect(folders, resumeTick.intValue, RefreshBus.tick.intValue) {
+    // 자동: 폴더/묶기 설정이 바뀌거나 앱으로 돌아올 때. 새 파일은 Download 에만 생기므로 거기만 훑는다 (표시 없음)
+    LaunchedEffect(folders, groupSubfolders, resumeTick.intValue, RefreshBus.tick.intValue) {
         refresh(setOf("Download"))
         // 폴더명을 바꾼 직후라면, 새 폴더의 그 앨범을 다시 연다
         ReopenRequest.key?.let { k ->
@@ -331,6 +343,24 @@ fun LibraryScreen() {
                         Switch(checked = includeMusic, onCheckedChange = {
                             includeMusic = it
                             Prefs.setIncludeMusic(ctx, it)
+                        })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text("폴더 단위로 적용하기")
+                            Text(
+                                "하위 폴더(disc1 등)를 상위 앨범 폴더 하나로 묶어서 한 번에 작업해요.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        Switch(checked = groupSubfolders, onCheckedChange = {
+                            groupSubfolders = it
+                            Prefs.setGroupSubfolders(ctx, it)
                         })
                     }
 

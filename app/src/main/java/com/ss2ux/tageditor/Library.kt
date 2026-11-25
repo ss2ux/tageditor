@@ -16,12 +16,14 @@ data class Track(
     val title: String,
     val trackNo: Int,
     val displayName: String,  // 파일 이름 (예: 곡.mp3)
-    val durationMs: Long
+    val durationMs: Long,
+    /** MediaStore RELATIVE_PATH + 파일명 (스캔 known 키용). 예: Download/앨범/disc1/곡.mp3 */
+    val relPath: String = ""
 )
 
 data class Album(
     val key: String,        // 목록에서 앨범을 구분하는 값
-    val path: String,       // MediaStore RELATIVE_PATH (예: Download/앨범폴더/)
+    val path: String,       // MediaStore RELATIVE_PATH (예: Download/앨범폴더/) — 하위폴더 묶기 시 상위 폴더
     val name: String,       // 앨범명 (폴더 이름 기준. Download/Music 바로 아래 낱개 곡만 앨범 태그 기준)
     val artist: String,     // 가장 많은 곡의 아티스트
     val addedAt: Long,      // 가장 최근 추가된 곡의 추가 시각(초)
@@ -36,12 +38,35 @@ private fun mostCommon(list: List<String>): String? =
         .maxByOrNull { it.value }?.key
 
 /**
+ * 하위 폴더 묶기 ON일 때: Download/Album/disc1/ → 그룹 경로 Download/Album/
+ * (루트 바로 아래 1단계 폴더만 앨범 단위로 쓴다)
+ */
+private fun groupPathFor(path: String, folders: Set<String>, groupSubfolders: Boolean): Pair<String, Boolean> {
+    val p = path.trimEnd('/')
+    val isRoot = p in folders
+    if (isRoot) return path to true
+    if (!groupSubfolders) return path to false
+    for (root in folders) {
+        if (p == root) return path to true
+        val prefix = "$root/"
+        if (p.startsWith(prefix)) {
+            val rest = p.removePrefix(prefix)
+            val first = rest.substringBefore('/')
+            if (first.isEmpty()) return path to true
+            return "$root/$first/" to false
+        }
+    }
+    return path to false
+}
+
+/**
  * 핵심: 파일을 하나도 열지 않고 MediaStore(안드로이드가 만들어 둔 미디어 DB)만 조회한다.
  * 그래서 곡이 수만 개여도 수십~수백 ms에 끝난다.
  *
  * folders: "Download", "Music" 처럼 최상위 폴더 이름들
+ * groupSubfolders: true면 하위 폴더(disc1 등)를 상위 앨범 폴더 하나로 묶는다
  */
-fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
+fun queryAlbums(context: Context, folders: Set<String>, groupSubfolders: Boolean = false): List<Album> {
     if (folders.isEmpty()) return emptyList()
     val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
     val cols = arrayOf(
@@ -75,6 +100,7 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
             val id = c.getLong(iId)
             val artist = c.getString(iArtist)?.takeIf { it != "<unknown>" } ?: ""
             val album = c.getString(iAlbum)?.takeIf { it != "<unknown>" } ?: ""
+            val displayName = c.getString(iName) ?: ""
             // 트랙번호가 1001처럼 (디스크*1000+트랙) 으로 저장된 경우 대비
             val trackNo = c.getInt(iTrack).let { if (it > 1000) it % 1000 else it }
             val track = Track(
@@ -82,15 +108,18 @@ fun queryAlbums(context: Context, folders: Set<String>): List<Album> {
                 uri = ContentUris.withAppendedId(collection, id),
                 title = NameCleaner.clean(c.getString(iTitle) ?: "").ifBlank { "(제목 없음)" },
                 trackNo = trackNo,
-                displayName = c.getString(iName) ?: "",
-                durationMs = c.getLong(iDur)
+                displayName = displayName,
+                durationMs = c.getLong(iDur),
+                relPath = path.trimEnd('/') + "/" + displayName
             )
             // 폴더 단위 = 앨범. 단, Download 바로 아래에 낱개로 있는 파일들은
             // 한 앨범으로 뭉치지 않도록 앨범 태그로 다시 나눈다.
-            val isRoot = path.trimEnd('/') in folders
-            val key = if (isRoot) "$path#$album" else path
+            // 하위 폴더 묶기 ON이면 Download/Album/disc1/ 도 Download/Album/ 로 묶는다.
+            val (gPath, isRoot) = groupPathFor(path, folders, groupSubfolders)
+            val key = if (isRoot) "$gPath#$album" else gPath
             groups.getOrPut(key) { mutableListOf() }.add(Entry(track, artist, album, c.getLong(iAdded)))
-            groupPath[key] = path
+            // 그룹 대표 경로는 상위(묶인) 경로로 고정
+            groupPath[key] = gPath
         }
     }
 
