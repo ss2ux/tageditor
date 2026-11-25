@@ -215,3 +215,46 @@ object NameCleaner {
         return r.trim()
     }
 }
+
+/**
+ * 아티스트/앨범 아티스트 칸용 정리.
+ * "성우" 는 역할 표시라서 이름에 넣지 않는다.
+ *  - 토큰이 "성우" 만이면 통째로 버림
+ *  - "성우아티스트1" 처럼 붙어 있어도 "성우"만 빼고 "아티스트1" 로 남김
+ *  - "성우 / 아티스트1 / 아티스트2" → "아티스트1 / 아티스트2"
+ */
+object ArtistCleaner {
+    /** 이름 조각에서 빼 버릴 역할 단어 (필요하면 여기 추가) */
+    val dropWords = listOf("성우")
+
+    /** 한 이름 조각에서 역할 단어를 지운다. 빈 문자열이 되면 그 조각은 버린다. */
+    fun cleanToken(token: String): String {
+        var r = token.trim()
+        for (w in dropWords) {
+            if (w.isEmpty()) continue
+            r = r.replace(w, "")
+        }
+        return r.trim()
+    }
+
+    /**
+     * "A / B / 성우 / C" 또는 "성우A / B" 형태를 정리한다.
+     * 구분자(공백·/)는 " / " 로 다시 맞춘다. 끝에 남은 구분자는 뺀다.
+     */
+    fun clean(s: String): String {
+        if (s.isEmpty()) return s
+        val tokens = ArrayList<String>()
+        val sb = StringBuilder()
+        fun flush() {
+            if (sb.isEmpty()) return
+            val t = cleanToken(sb.toString())
+            if (t.isNotEmpty()) tokens.add(t)
+            sb.setLength(0)
+        }
+        for (ch in s) {
+            if (ch.isWhitespace() || ch == '/') flush() else sb.append(ch)
+        }
+        flush()
+        return tokens.joinToString(" / ")
+    }
+}

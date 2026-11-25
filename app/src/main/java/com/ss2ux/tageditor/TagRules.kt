@@ -284,8 +284,9 @@ object TagRules {
         val out = req.copy(
             title = conv("트랙명", req.title),
             album = conv("앨범", req.album),
-            artist = conv("아티스트", req.artist),
-            albumArtist = conv("앨범 아티스트", req.albumArtist),
+            // 아티스트 계열은 치환 후에도 "성우" 역할 단어를 넣지 않는다
+            artist = conv("아티스트", req.artist)?.let { ArtistCleaner.clean(it) },
+            albumArtist = conv("앨범 아티스트", req.albumArtist)?.let { ArtistCleaner.clean(it) },
             genre = conv("장르", req.genre)
         )
         return out to changes

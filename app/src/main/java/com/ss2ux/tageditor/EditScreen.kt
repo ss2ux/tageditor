@@ -454,8 +454,8 @@ fun EditScreen(
     }
     var trackNoText by remember { mutableStateOf(iTrackNo) }
     var albumText by remember { mutableStateOf(iAlbum) }
-    var artistText by remember { mutableStateOf(iArtist.ifBlank { autoArtist }) }
-    var albumArtistText by remember { mutableStateOf(iAlbumArtist.ifBlank { autoAlbumArtist }) }
+    var artistText by remember { mutableStateOf(ArtistCleaner.clean(iArtist.ifBlank { autoArtist })) }
+    var albumArtistText by remember { mutableStateOf(ArtistCleaner.clean(iAlbumArtist.ifBlank { autoAlbumArtist })) }
     var genreText by remember { mutableStateOf(iGenre) }
     var yearDigits by remember { mutableStateOf(iYear.ifBlank { autoYear }) }
 
@@ -490,9 +490,12 @@ fun EditScreen(
     val cTitle = trackMode && title.trim() != iTitle.trim()
     val cTrackNo = trackMode && trackNoText != iTrackNo
     val cAlbum = albumText.trim() != tagAlbum.trim()
-    val artistFinal = artistText.trim().trimEnd('/').trim()   // 입력 중 끝에 남은 " / " 는 저장할 때 뺀다
+    // 입력 중 끝에 남은 " / " 는 저장할 때 빼고, "성우" 역할 단어도 넣지 않는다
+    val artistFinal = ArtistCleaner.clean(artistText.trim().trimEnd('/').trim())
+    val albumArtistFinal = ArtistCleaner.clean(albumArtistText.trim())
+    // 원본 태그에 "성우"가 들어 있어도 정리된 값과 다르면 저장 대상이 된다
     val cArtist = artistFinal != iArtist.trim()
-    val cAlbumArtist = albumArtistText.trim() != iAlbumArtist.trim()
+    val cAlbumArtist = albumArtistFinal != iAlbumArtist.trim()
     val cGenre = genreHas || genreText.trim().isNotEmpty()   // 지울 장르가 있거나, 새로 입력했으면 바뀐 것
     val cYear = yearDigits != iYear
     val anyChange = cTitle || cTrackNo || cAlbum || cArtist || cAlbumArtist || cGenre || cYear || newArt != null
@@ -534,7 +537,7 @@ fun EditScreen(
                                 trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: -1) else null,
                                 album = if (cAlbum) NameCleaner.clean(albumText) else null,
                                 artist = if (cArtist) artistFinal else null,
-                                albumArtist = if (cAlbumArtist) albumArtistText.trim() else null,
+                                albumArtist = if (cAlbumArtist) albumArtistFinal else null,
                                 year = if (cYear) formatYear(yearDigits) else null,
                                 // 빈칸이면 "" -> 장르 프레임 삭제. 화면에 안 보이는 이상한 값도 같이 지워진다
                                 genre = genreText.trim(),
@@ -762,8 +765,8 @@ fun EditScreen(
                     )
                     TextButton(
                         onClick = {
-                            if (artistMajor.isNotEmpty()) artistText = artistMajor
-                            if (albumArtistMajor.isNotEmpty()) albumArtistText = albumArtistMajor
+                            if (artistMajor.isNotEmpty()) artistText = ArtistCleaner.clean(artistMajor)
+                            if (albumArtistMajor.isNotEmpty()) albumArtistText = ArtistCleaner.clean(albumArtistMajor)
                             if (yearMajor.isNotEmpty()) yearDigits = yearMajor
                         },
                         modifier = Modifier.align(Alignment.End)
@@ -922,19 +925,24 @@ private fun reformatArtist(old: String, new: String, cursor: Int, composing: Boo
     }
 
     // 이름 조각으로 나눠서 " / " 로 다시 잇는다
+    // "성우" 같은 역할 단어는 ArtistCleaner 로 빼서 이름에 남기지 않는다
     val tokens = ArrayList<String>()
     val sb = StringBuilder()
     for (ch in raw) {
         if (isSepChar(ch)) {
             if (sb.isNotEmpty()) {
-                tokens.add(sb.toString())
+                val t = ArtistCleaner.cleanToken(sb.toString())
+                if (t.isNotEmpty()) tokens.add(t)
                 sb.setLength(0)
             }
         } else {
             sb.append(ch)
         }
     }
-    if (sb.isNotEmpty()) tokens.add(sb.toString())
+    if (sb.isNotEmpty()) {
+        val t = ArtistCleaner.cleanToken(sb.toString())
+        if (t.isNotEmpty()) tokens.add(t)
+    }
     var text = tokens.joinToString(" / ")
     // 끝에서 띄어쓰기를 쳤으면 다음 이름을 위해 " / " 를 붙여 둔다 (지우는 중에는 붙이지 않음)
     if (!deleting && tokens.isNotEmpty() && isSepChar(raw.last())) text += " / "
