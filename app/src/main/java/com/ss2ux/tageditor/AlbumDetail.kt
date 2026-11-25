@@ -83,6 +83,9 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     var showNumbering by remember(album.key) { mutableStateOf(false) }
     // 파일명으로 트랙명 일괄 바꾸기 미리보기 창
     var showTitles by remember(album.key) { mutableStateOf(false) }
+    // 하위 폴더 음원·자막을 바깥 폴더로 모으기
+    var showOrganize by remember(album.key) { mutableStateOf(false) }
+    var organizing by remember { mutableStateOf(false) }
 
     // 5단계: 수정 화면 (editTarget == null 이면 앨범 전체, 아니면 그 트랙만)
     var editing by remember(album.key) { mutableStateOf(false) }
@@ -148,7 +151,7 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize()) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 상단 바: 뒤로가기 / 수정 버튼
+            // 상단 바: 뒤로가기 / 음원 정리 / 제목·번호·수정
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -156,7 +159,26 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                 }
-                Box(modifier = Modifier.weight(1f))
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    TextButton(
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        enabled = !organizing && saveProgress == null,
+                        onClick = {
+                            if (album.tracks.isEmpty()) {
+                                Toast.makeText(ctx, "곡이 없어요", Toast.LENGTH_SHORT).show()
+                            } else if (!TagSaver.hasAllFilesAccess()) {
+                                showPermission = true
+                            } else {
+                                showOrganize = true
+                            }
+                        }
+                    ) {
+                        Text("음원 정리", fontSize = 15.sp)
+                    }
+                }
                 TextButton(
                     contentPadding = PaddingValues(horizontal = 8.dp),
                     onClick = {
@@ -535,6 +557,69 @@ fun AlbumDetailScreen(album: Album, onBack: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { showTitles = false }) { Text("취소") }
+            }
+        )
+    }
+
+    if (showOrganize) {
+        AlertDialog(
+            onDismissRequest = { if (!organizing) showOrganize = false },
+            title = { Text("음원 정리") },
+            text = {
+                Text(
+                    "하위 폴더에 흩어진 음원을 이 앨범의 바깥 폴더로 모아요.\n\n" +
+                        "· 음원이 있는 폴더만 대상이에요\n" +
+                        "· 같은 폴더에 이름 줄기가 맞는 자막(.vtt .srt .lrc .txt)만 함께 옮겨요\n" +
+                        "· 음원 없이 자막만 있는 폴더는 그대로 둡니다\n\n" +
+                        "뮤직 플레이어에서 앨범이 쪼개져 보일 때 쓰면 좋아요."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !organizing,
+                    onClick = {
+                        if (!TagSaver.hasAllFilesAccess()) {
+                            showOrganize = false
+                            showPermission = true
+                            return@TextButton
+                        }
+                        organizing = true
+                        scope.launch {
+                            val r = withContext(Dispatchers.IO) {
+                                AudioOrganize.flatten(ctx, album)
+                            }
+                            organizing = false
+                            showOrganize = false
+                            if (r.error != null) {
+                                Toast.makeText(ctx, r.error, Toast.LENGTH_LONG).show()
+                            } else if (r.movedAudio == 0 && r.movedSub == 0 && r.failed.isEmpty()) {
+                                Toast.makeText(ctx, "이미 한 폴더에 모여 있어요", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val msg = buildString {
+                                    append("음원 ${r.movedAudio}개")
+                                    if (r.movedSub > 0) append(" · 자막 ${r.movedSub}개")
+                                    append(" 옮겼어요")
+                                    if (r.failed.isNotEmpty()) append(" (실패 ${r.failed.size}개)")
+                                }
+                                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                                if (r.failed.isNotEmpty()) {
+                                    Toast.makeText(
+                                        ctx,
+                                        r.failed.take(3).joinToString("\n"),
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                ThumbCache.clear()
+                                LargeArt.clear()
+                                AlbumTagLoader.invalidate()
+                                RefreshBus.tick.intValue++
+                            }
+                        }
+                    }
+                ) { Text(if (organizing) "정리 중…" else "정리하기") }
+            },
+            dismissButton = {
+                TextButton(enabled = !organizing, onClick = { showOrganize = false }) { Text("취소") }
             }
         )
     }
