@@ -100,15 +100,15 @@ fun suggestAlbumArtists(
     fun addWithParts(v: String) {
         val t = v.trim()
         if (t.isEmpty()) return
-        pool.add(t)
+        // 묶음 전체("A · B")는 추천에 넣지 않고, 쪼갠 이름만 넣는다
         val parts = when {
             " · " in t -> t.split(" · ")
             " / " in t -> t.split(" / ")
-            else -> emptyList()
+            else -> listOf(t)
         }
         for (n in parts) {
             val x = n.trim()
-            if (x.isNotEmpty()) pool.add(x)
+            if (x.isNotEmpty() && " · " !in x && " / " !in x) pool.add(x)
         }
     }
     addWithParts(artistText)
@@ -125,6 +125,8 @@ fun suggestAlbumArtists(
     val contains = ArrayList<String>()
     for (c in pool) {
         if (c.equals(query, ignoreCase = true)) continue
+        // 여러 명이 한 줄로 묶인 항목은 추천에서 제외
+        if (" · " in c || " / " in c) continue
         if (!seen.add(c.lowercase())) continue
         if (c.startsWith(query, ignoreCase = true)) starts.add(c)
         else if (c.contains(query, ignoreCase = true)) contains.add(c)
