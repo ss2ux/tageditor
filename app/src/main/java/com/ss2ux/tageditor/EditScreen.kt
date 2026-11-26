@@ -793,16 +793,14 @@ fun EditScreen(
                 JpHint(artistText)
                 ArtistField("아티스트", artistText, { artistText = it }, mArtist)
                 JpHint(albumArtistText)
-                // 한 글자 이상 적으면, 이미 있는 아티스트 이름 중 비슷한 것을 작게 추천한다
-                val aaQuery = albumArtistText.trim()
-                if (aaQuery.isNotEmpty()) {
-                    val sugg = suggestAlbumArtists(aaQuery, artistText, tags, deviceAlbumArtists)
-                    if (sugg.isNotEmpty()) {
-                        SuggestionRow(sugg) { albumArtistText = it }
-                    }
-                }
-                // 앨범 아티스트만: 띄어쓰기로 추가, '/' 는 이름에 포함, 칩으로 구분, 저장은 " · "
-                AlbumArtistField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
+                // 앨범 아티스트: 이름 공백 유지, 여러 명만 「추가」·중점 구분, 추천은 입력 중 글자 기준
+                AlbumArtistField(
+                    label = "앨범 아티스트",
+                    value = albumArtistText,
+                    onChange = { albumArtistText = it },
+                    mixed = mAlbumArtist,
+                    suggest = { q -> suggestAlbumArtists(q, artistText, tags, deviceAlbumArtists) }
+                )
 
                 // 연도: 숫자만 입력, 점은 자동
                 OutlinedTextField(

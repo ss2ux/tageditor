@@ -29,14 +29,11 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ---------------------------------------------------------------------------
-// 아티스트 칸: 공백·/ → " / " (기존)
-// 앨범 아티스트 칸: 띄어쓰기로만 추가, '/' 는 이름에 포함, 칩 UI, 태그는 " · "
-// ---------------------------------------------------------------------------
+// 아티스트: 공백·/ → " / "
+// 앨범 아티스트: 띄어쓰기로 다음 사람, 저장은 " · " (TagRules 에서도 cleanAlbumArtist 만 사용)
 
 private fun isSepChar(c: Char): Boolean = c.isWhitespace() || c == '/'
 
-/** 반환: (새 글, 커서). null 이면 그대로 통과. */
 private fun reformatArtist(
     old: String,
     new: String,
@@ -155,7 +152,6 @@ fun ArtistField(
     )
 }
 
-/** 앨범 아티스트 여러 명 구분자 (이름에 '/' 가 있어도 됨) */
 const val MULTI_ARTIST_SEP = " · "
 
 fun splitMultiArtist(s: String): List<String> =
@@ -167,17 +163,33 @@ fun joinMultiArtist(parts: List<String>): String =
 
 fun normalizeMultiArtist(s: String): String = joinMultiArtist(splitMultiArtist(s))
 
+/**
+ * 띄어쓰기 = 다음 사람(칩). value 는 항상 "A · B" 형태라 저장 경로와 일치.
+ * 칩이 없을 때 입력은 value 에 바로 반영 → 한 명만 저장해도 빈칸 안 남음.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AlbumArtistField(
     label: String,
     value: String,
     onChange: (String) -> Unit,
-    mixed: Boolean = false
+    mixed: Boolean = false,
+    suggest: (query: String) -> List<String> = { emptyList() }
 ) {
     val chips = splitMultiArtist(value)
     var draft by remember { mutableStateOf("") }
-    fun emit(next: List<String>) = onChange(joinMultiArtist(next))
+
+    fun emit(parts: List<String>) {
+        onChange(joinMultiArtist(parts))
+    }
+
+    fun commitToken(raw: String) {
+        val t = ArtistCleaner.cleanToken(raw.trim())
+        if (t.isEmpty()) return
+        if (chips.any { it.equals(t, ignoreCase = true) }) return
+        emit(chips + t)
+        draft = ""
+    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
         Text(
@@ -186,7 +198,7 @@ fun AlbumArtistField(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
         )
-        if (mixed && chips.isEmpty() && draft.isEmpty()) {
+        if (mixed && value.isBlank() && draft.isEmpty()) {
             Text(
                 "여러 값 · 그대로 두면 변경 안 함",
                 fontSize = 12.sp,
@@ -218,35 +230,52 @@ fun AlbumArtistField(
                 }
             }
         }
+
+        val q = (if (chips.isEmpty()) value else draft).trim()
+        if (q.isNotEmpty()) {
+            val sugg = remember(q, value) { suggest(q) }
+            if (sugg.isNotEmpty()) {
+                SuggestionRow(sugg) { picked ->
+                    val t = ArtistCleaner.cleanToken(picked.trim())
+                    if (t.isEmpty()) return@SuggestionRow
+                    if (chips.isEmpty()) {
+                        onChange(t)
+                        draft = ""
+                    } else {
+                        commitToken(t)
+                    }
+                }
+            }
+        }
+
         OutlinedTextField(
-            value = draft,
+            value = if (chips.isEmpty()) value else draft,
             onValueChange = { nv ->
-                if (nv.contains('\n')) {
-                    val t = ArtistCleaner.cleanToken(nv.replace("\n", " ").trim())
-                    if (t.isNotEmpty()) emit(chips + t)
-                    draft = ""
+                if (nv.isNotEmpty() && nv.last().isWhitespace()) {
+                    val token = nv.dropLast(1).trim()
+                    if (token.isNotEmpty()) {
+                        if (chips.isEmpty()) {
+                            val t = ArtistCleaner.cleanToken(token)
+                            if (t.isNotEmpty()) {
+                                emit(listOf(t))
+                                draft = ""
+                            }
+                        } else {
+                            commitToken(token)
+                        }
+                    }
                     return@OutlinedTextField
                 }
-                if (nv.isNotEmpty() && nv.last().isWhitespace()) {
-                    val token = ArtistCleaner.cleanToken(nv.dropLast(1).trim())
-                    if (token.isNotEmpty()) {
-                        emit(chips + token)
-                        draft = ""
-                    } else draft = nv.trim()
-                } else draft = nv
+                if (chips.isEmpty()) onChange(nv) else draft = nv
             },
             label = { Text(if (chips.isEmpty()) "이름 입력" else "이름 추가") },
-            placeholder = { Text("띄어쓰기로 다음 이름 추가 (/ 는 이름에 포함)") },
+            placeholder = { Text("띄어쓰기로 다음 사람 추가") },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .onFocusChanged { f ->
-                    if (!f.isFocused) {
-                        val t = ArtistCleaner.cleanToken(draft.trim())
-                        if (t.isNotEmpty()) {
-                            emit(chips + t)
-                            draft = ""
-                        }
+                    if (!f.isFocused && chips.isNotEmpty() && draft.isNotBlank()) {
+                        commitToken(draft)
                     }
                 }
         )

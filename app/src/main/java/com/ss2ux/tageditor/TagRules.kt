@@ -286,7 +286,8 @@ object TagRules {
             album = conv("앨범", req.album),
             // 아티스트 계열은 치환 후에도 "성우" 역할 단어를 넣지 않는다
             artist = conv("아티스트", req.artist)?.let { ArtistCleaner.clean(it) },
-            albumArtist = conv("앨범 아티스트", req.albumArtist)?.let { ArtistCleaner.clean(it) },
+            // 앨범 아티스트는 " · " 구분 — clean() 쓰면 공백·중점이 " / " 로 깨짐
+            albumArtist = conv("앨범 아티스트", req.albumArtist)?.let { ArtistCleaner.cleanAlbumArtist(it) },
             genre = conv("장르", req.genre)
         )
         return out to changes
