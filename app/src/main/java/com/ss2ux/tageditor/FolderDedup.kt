@@ -8,26 +8,39 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * 폴더명에서 **연속으로 100% 같은 구간**이 두 번 붙은 경우만 한 번으로 줄인다.
- * 예) "…엔드게임어벤져스 엔드게임" / "…엔드게임 어벤져스 엔드게임" 의 반복만 제거.
- * "어벤져스 모음 - 어벤져스 엔드게임" 처럼 떨어져 있는 같은 단어는 건드리지 않는다.
+ * 폴더명에서 **제목 부분**만 보고, 통째로 같은 문장이 연속 두 번인 경우만 한 번으로 줄인다.
+ * 끝의 RJ번호(RJ123456, [RJ…], (RJ…) 등)는 비교·접기에서 **제외**하고, 결과 이름에 그대로 붙인다.
  */
 object FolderNameDedup {
 
+    private const val MIN_UNIT = 6
+
+    private val rjTail =
+        Regex("""[\s_\-]*[\[(（【]?\s*RJ\d{6,}\s*[\])）】]?\s*$""", RegexOption.IGNORE_CASE)
+
     data class Proposal(val dir: File, val from: String, val to: String)
 
-    /** 한 번 접기. 없으면 null */
+    /** (제목, RJ접미) — RJ는 원문 끝에서 떼어 낸 그대로 */
+    fun splitTitleAndRj(name: String): Pair<String, String> {
+        var body = name
+        val suf = StringBuilder()
+        while (true) {
+            val m = rjTail.find(body) ?: break
+            suf.insert(0, body.substring(m.range))
+            body = body.substring(0, m.range.first).trimEnd()
+        }
+        return body to suf.toString()
+    }
+
     fun collapseOnce(s: String): String? {
-        // 최소 2글자 단위 (한 글자 반복은 오탐 많음)
-        for (len in s.length / 2 downTo 2) {
+        if (s.length < MIN_UNIT * 2) return null
+        for (len in s.length / 2 downTo MIN_UNIT) {
             var i = 0
             while (i <= s.length - 2 * len) {
                 val unit = s.substring(i, i + len)
-                // 바로 뒤 동일
                 if (s.regionMatches(i + len, unit, 0, len)) {
                     return s.removeRange(i + len, i + 2 * len)
                 }
-                // 사이 공백 하나
                 if (i + 2 * len + 1 <= s.length &&
                     s[i + len] == ' ' &&
                     s.regionMatches(i + len + 1, unit, 0, len)
@@ -40,62 +53,66 @@ object FolderNameDedup {
         return null
     }
 
-    /** 더 이상 안 줄 때까지 접기. 변화가 없으면 null */
-    fun collapse(name: String): String? {
-        var s = name
+    fun collapseTitle(title: String): String? {
+        var s = title
         var changed = false
-        repeat(32) {
-            val n = collapseOnce(s) ?: return if (changed) s else null
-            if (n == s) return if (changed) s else null
+        repeat(16) {
+            val n = collapseOnce(s) ?: return if (changed) normalizeSpaces(s) else null
+            if (n == s) return if (changed) normalizeSpaces(s) else null
             s = n
             changed = true
         }
-        return if (changed) s else null
+        return if (changed) normalizeSpaces(s) else null
     }
 
-    /**
-     * Music 바로 아래 1단계 폴더만 검사.
-     * (Music/앨범명/…)
-     */
+    private fun normalizeSpaces(s: String) = s.trim().replace(Regex("\\s+"), " ")
+
+    /** 전체 폴더명 → 접힌 전체 이름 (RJ 유지). 변화 없으면 null */
+    fun collapseFolderName(name: String): String? {
+        val (title, rj) = splitTitleAndRj(name)
+        if (title.isEmpty()) return null
+        val newTitle = collapseTitle(title) ?: return null
+        if (newTitle.isEmpty()) return null
+        val out = if (rj.isEmpty()) newTitle else {
+            val gap = if (rj.first().isWhitespace()) "" else " "
+            newTitle + gap + rj.trimStart()
+        }
+        return if (out == name) null else out
+    }
+
     fun scanMusic(context: Context): List<Proposal> {
-        val base = Environment.getExternalStorageDirectory()
-        val music = File(base, "Music")
+        val music = File(Environment.getExternalStorageDirectory(), "Music")
         if (!music.isDirectory) return emptyList()
         val out = ArrayList<Proposal>()
-        val children = music.listFiles() ?: return emptyList()
-        for (dir in children) {
+        for (dir in music.listFiles() ?: return emptyList()) {
             if (!dir.isDirectory) continue
             val from = dir.name
-            val to = collapse(from) ?: continue
-            if (to.isEmpty() || to == from) continue
+            val to = collapseFolderName(from) ?: continue
             out.add(Proposal(dir, from, to))
         }
         return out.sortedBy { it.from.lowercase() }
     }
 
-    /** 선택한 제안만 이름 변경 + 미디어 스캔 */
     fun apply(context: Context, selected: List<Proposal>): Pair<Int, List<String>> {
         var ok = 0
         val errors = ArrayList<String>()
         val scanPaths = ArrayList<String>()
         for (p in selected) {
-            val target = File(p.dir.parentFile, FolderRename.sanitize(p.to))
-            if (target.exists() && !target.absolutePath.equals(p.dir.absolutePath, ignoreCase = true)) {
-                errors.add("${p.from} → 같은 이름 폴더가 이미 있음")
-                continue
-            }
             val safeName = FolderRename.sanitize(p.to)
             if (safeName.isEmpty()) {
                 errors.add("${p.from} → 정리 결과가 비어 있음")
                 continue
             }
             val dest = File(p.dir.parentFile, safeName)
+            if (dest.exists() && !dest.absolutePath.equals(p.dir.absolutePath, ignoreCase = true)) {
+                errors.add("${p.from} → 같은 이름 폴더가 이미 있음")
+                continue
+            }
             if (!p.dir.renameTo(dest)) {
                 errors.add("${p.from} → 이름 변경 실패")
                 continue
             }
             ok++
-            // 폴더 안 파일 스캔
             dest.walkTopDown().maxDepth(3).forEach { f ->
                 if (f.isFile) scanPaths.add(f.absolutePath)
             }
@@ -104,9 +121,7 @@ object FolderNameDedup {
             try {
                 val latch = CountDownLatch(1)
                 MediaScannerConnection.scanFile(
-                    context,
-                    scanPaths.toTypedArray(),
-                    null
+                    context, scanPaths.toTypedArray(), null
                 ) { _, _ -> latch.countDown() }
                 latch.await(45, TimeUnit.SECONDS)
             } catch (_: Throwable) { }

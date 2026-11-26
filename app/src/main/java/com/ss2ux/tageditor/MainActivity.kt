@@ -413,7 +413,7 @@ fun LibraryScreen() {
                     // --- 정리 · 일괄 ---
                     Text("정리 · 일괄", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
                     Text(
-                        "Music 폴더 바로 아래 앨범 폴더 이름에서, 같은 문구가 연속으로 두 번 붙은 경우만 한 번으로 줄여요.",
+                        "Music 폴더 바로 아래 이름에서, 끝 RJ번호는 빼고 제목만 보고, 같은 문장이 연속으로 두 번 붙은 경우만 줄여요. 짧은 음절 반복·떨어진 같은 단어는 안 건드리고 RJ는 그대로 둡니다.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp)
@@ -492,7 +492,7 @@ fun LibraryScreen() {
             text = {
                 Column {
                     Text(
-                        "연속으로 같은 문구가 두 번 붙은 폴더만 목록에 있어요. 적용할 항목을 고르세요.",
+                        "같은 문장이 토씨 하나 안 틀리고 연속으로 두 번 들어간 폴더만 보여 줘요. 적용할 항목을 고르세요.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
