@@ -496,7 +496,7 @@ fun LibraryScreen() {
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Row(Modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { dedupChecked = dedupProps.map { it.from }.toSet() }) { Text("모두 선택") }
                         TextButton(onClick = { dedupChecked = emptySet() }) { Text("모두 해제") }
                     }
@@ -504,7 +504,7 @@ fun LibraryScreen() {
                         Text(dedupMsg ?: "항목 없음", modifier = Modifier.padding(top = 12.dp))
                     } else {
                         // 설정 다이얼로그 안이라 높이 제한
-                        Column(Modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                             dedupProps.forEach { p ->
                                 Row(
                                     Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -516,7 +516,7 @@ fun LibraryScreen() {
                                             dedupChecked = if (on) dedupChecked + p.from else dedupChecked - p.from
                                         }
                                     )
-                                    Column(Modifier = Modifier.weight(1f)) {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(p.from, fontSize = 13.sp)
                                         Text("→ ${p.to}", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                                     }

@@ -223,7 +223,8 @@ fun saveAlbumArtistOnly(context: Context, trackIds: List<Long>, albumArtist: Str
                 ),
                 title = "",
                 trackNo = 0,
-                displayName = ""
+                displayName = "",
+                durationMs = 0L
             )
         }
     )
