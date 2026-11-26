@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -43,6 +44,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -189,6 +193,12 @@ fun LibraryScreen() {
     var loadMs by remember { mutableStateOf(-1L) }
     var manualScanning by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showFolderDedup by remember { mutableStateOf(false) }
+    var showAlbumArtistBrowse by remember { mutableStateOf(false) }
+    var dedupProps by remember { mutableStateOf<List<FolderNameDedup.Proposal>>(emptyList()) }
+    var dedupChecked by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var dedupBusy by remember { mutableStateOf(false) }
+    var dedupMsg by remember { mutableStateOf<String?>(null) }
     var manualTick by remember { mutableIntStateOf(0) }
     var openKey by remember { mutableStateOf<String?>(null) }   // 상세 화면으로 열린 앨범
     val gridState = rememberLazyGridState()
@@ -400,6 +410,49 @@ fun LibraryScreen() {
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
+                    // --- 정리 · 일괄 ---
+                    Text("정리 · 일괄", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "Music 폴더 바로 아래 앨범 폴더 이름에서, 같은 문구가 연속으로 두 번 붙은 경우만 한 번으로 줄여요.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                    TextButton(
+                        onClick = {
+                            showSettings = false
+                            dedupMsg = null
+                            dedupBusy = true
+                            // scan on UI thread via coroutine - use blocking IO through rememberCoroutineScope outside; use simple thread
+                            Thread {
+                                val list = FolderNameDedup.scanMusic(ctx)
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    dedupProps = list
+                                    dedupChecked = list.map { it.from }.toSet()
+                                    dedupBusy = false
+                                    showFolderDedup = true
+                                    if (list.isEmpty()) dedupMsg = "고칠 폴더명이 없어요"
+                                }
+                            }.start()
+                        },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) { Text("폴더명 중복 정리") }
+                    Text(
+                        "앨범 아티스트 이름으로 묶어서 보고, 이름을 바꾸면 해당 곡 전부 태그를 고쳐요.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp)
+                    )
+                    TextButton(
+                        onClick = {
+                            showSettings = false
+                            showAlbumArtistBrowse = true
+                        },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) { Text("앨범 아티스트별 보기") }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
                     // --- 치환 규칙 ---
                     Text("치환 규칙", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
                     Text(
@@ -421,7 +474,88 @@ fun LibraryScreen() {
         )
     }
 
-    if (showRules) {
+    
+    if (showAlbumArtistBrowse) {
+        Surface(Modifier.fillMaxSize()) {
+            AlbumArtistBrowseScreen(
+                folders = folders,
+                onClose = { showAlbumArtistBrowse = false },
+                onDone = { manualTick++ }
+            )
+        }
+    }
+
+    if (showFolderDedup) {
+        AlertDialog(
+            onDismissRequest = { if (!dedupBusy) showFolderDedup = false },
+            title = { Text("폴더명 중복 정리") },
+            text = {
+                Column {
+                    Text(
+                        "연속으로 같은 문구가 두 번 붙은 폴더만 목록에 있어요. 적용할 항목을 고르세요.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(Modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { dedupChecked = dedupProps.map { it.from }.toSet() }) { Text("모두 선택") }
+                        TextButton(onClick = { dedupChecked = emptySet() }) { Text("모두 해제") }
+                    }
+                    if (dedupProps.isEmpty()) {
+                        Text(dedupMsg ?: "항목 없음", modifier = Modifier.padding(top = 12.dp))
+                    } else {
+                        // 설정 다이얼로그 안이라 높이 제한
+                        Column(Modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                            dedupProps.forEach { p ->
+                                Row(
+                                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = p.from in dedupChecked,
+                                        onCheckedChange = { on ->
+                                            dedupChecked = if (on) dedupChecked + p.from else dedupChecked - p.from
+                                        }
+                                    )
+                                    Column(Modifier = Modifier.weight(1f)) {
+                                        Text(p.from, fontSize = 13.sp)
+                                        Text("→ ${p.to}", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    dedupMsg?.let {
+                        if (dedupProps.isNotEmpty()) Text(it, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !dedupBusy && dedupChecked.isNotEmpty(),
+                    onClick = {
+                        dedupBusy = true
+                        val chosen = dedupProps.filter { it.from in dedupChecked }
+                        Thread {
+                            val (ok, errs) = FolderNameDedup.apply(ctx, chosen)
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                dedupBusy = false
+                                dedupMsg = "${ok}개 변경" + (if (errs.isNotEmpty()) " · 실패 ${errs.size}" else "")
+                                if (ok > 0) {
+                                    showFolderDedup = false
+                                    manualTick++
+                                }
+                            }
+                        }.start()
+                    }
+                ) { Text(if (dedupBusy) "적용 중…" else "적용") }
+            },
+            dismissButton = {
+                TextButton(enabled = !dedupBusy, onClick = { showFolderDedup = false }) { Text("닫기") }
+            }
+        )
+    }
+
+if (showRules) {
         TagRulesDialog(onClose = { showRules = false })
     }
 
