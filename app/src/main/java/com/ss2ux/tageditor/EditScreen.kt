@@ -24,6 +24,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,6 +45,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -455,7 +458,7 @@ fun EditScreen(
     var trackNoText by remember { mutableStateOf(iTrackNo) }
     var albumText by remember { mutableStateOf(iAlbum) }
     var artistText by remember { mutableStateOf(ArtistCleaner.clean(iArtist.ifBlank { autoArtist })) }
-    var albumArtistText by remember { mutableStateOf(ArtistCleaner.clean(iAlbumArtist.ifBlank { autoAlbumArtist })) }
+    var albumArtistText by remember { mutableStateOf(ArtistCleaner.cleanAlbumArtist(iAlbumArtist.ifBlank { autoAlbumArtist })) }
     var genreText by remember { mutableStateOf(iGenre) }
     var yearDigits by remember { mutableStateOf(iYear.ifBlank { autoYear }) }
 
@@ -490,9 +493,9 @@ fun EditScreen(
     val cTitle = trackMode && title.trim() != iTitle.trim()
     val cTrackNo = trackMode && trackNoText != iTrackNo
     val cAlbum = albumText.trim() != tagAlbum.trim()
-    // 입력 중 끝에 남은 " / " 는 저장할 때 빼고, "성우" 역할 단어도 넣지 않는다
+    // 아티스트: 기존처럼 공백·/ → " / " . 앨범 아티스트: 중점 " · " 만으로 여러 명
     val artistFinal = ArtistCleaner.clean(artistText.trim().trimEnd('/').trim())
-    val albumArtistFinal = ArtistCleaner.clean(albumArtistText.trim())
+    val albumArtistFinal = ArtistCleaner.cleanAlbumArtist(normalizeMultiArtist(albumArtistText))
     // 원본 태그에 "성우"가 들어 있어도 정리된 값과 다르면 저장 대상이 된다
     val cArtist = artistFinal != iArtist.trim()
     val cAlbumArtist = albumArtistFinal != iAlbumArtist.trim()
@@ -507,7 +510,21 @@ fun EditScreen(
         FolderRename.buildName(NameCleaner.clean(ruleEngine.clean(albumText.trim())), rjCode)
     } else ""
     val folderRenameOn = canRenameFolder && renameChecked && folderTarget.isNotBlank() && folderTarget != rawFolderName
-    val canSave = (anyChange || folderRenameOn) && yearOk && !artBusy
+    // 화면 값에는 손 안 대도, 치환 규칙을 적용하면 달라지는 필드가 있으면 저장 가능
+    val rulesWouldChange = remember(
+        title, albumText, artistFinal, albumArtistFinal, genreText, trackMode, TagRules.load(ctx).size
+    ) {
+        val probe = EditRequest(
+            trackIds = emptyList(),
+            title = if (trackMode) NameCleaner.clean(title).ifBlank { null } else null,
+            album = NameCleaner.clean(albumText).ifBlank { null },
+            artist = artistFinal.ifBlank { null },
+            albumArtist = albumArtistFinal.ifBlank { null },
+            genre = genreText.trim().ifEmpty { null }
+        )
+        TagRules.applyTo(ctx, probe).second.isNotEmpty()
+    }
+    val canSave = (anyChange || folderRenameOn || rulesWouldChange) && yearOk && !artBusy
 
     BackHandler(enabled = pendingBitmap == null) { if (anyChange) confirmDiscard = true else onClose() }
 
@@ -531,13 +548,14 @@ fun EditScreen(
                 TextButton(
                     enabled = canSave,
                     onClick = {
+                        // 치환 규칙만으로 바뀌는 경우에도 해당 칸 값을 넘겨야 규칙이 적용된다
                         val built = EditRequest(
                                 trackIds = if (track != null) listOf(track.id) else album.tracks.map { it.id },
-                                title = if (cTitle) NameCleaner.clean(title) else null,
+                                title = if (trackMode && (cTitle || rulesWouldChange)) NameCleaner.clean(title) else null,
                                 trackNo = if (cTrackNo) (trackNoText.toIntOrNull() ?: -1) else null,
-                                album = if (cAlbum) NameCleaner.clean(albumText) else null,
-                                artist = if (cArtist) artistFinal else null,
-                                albumArtist = if (cAlbumArtist) albumArtistFinal else null,
+                                album = if (cAlbum || rulesWouldChange) NameCleaner.clean(albumText) else null,
+                                artist = if (cArtist || rulesWouldChange) artistFinal else null,
+                                albumArtist = if (cAlbumArtist || rulesWouldChange) albumArtistFinal else null,
                                 year = if (cYear) formatYear(yearDigits) else null,
                                 // 빈칸이면 "" -> 장르 프레임 삭제. 화면에 안 보이는 이상한 값도 같이 지워진다
                                 genre = genreText.trim(),
@@ -766,7 +784,7 @@ fun EditScreen(
                     TextButton(
                         onClick = {
                             if (artistMajor.isNotEmpty()) artistText = ArtistCleaner.clean(artistMajor)
-                            if (albumArtistMajor.isNotEmpty()) albumArtistText = ArtistCleaner.clean(albumArtistMajor)
+                            if (albumArtistMajor.isNotEmpty()) albumArtistText = ArtistCleaner.cleanAlbumArtist(albumArtistMajor)
                             if (yearMajor.isNotEmpty()) yearDigits = yearMajor
                         },
                         modifier = Modifier.align(Alignment.End)
@@ -783,7 +801,8 @@ fun EditScreen(
                         SuggestionRow(sugg) { albumArtistText = it }
                     }
                 }
-                EditField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
+                // 앨범 아티스트만: 띄어쓰기로 추가, '/' 는 이름에 포함, 칩으로 구분, 저장은 " · "
+                AlbumArtistField("앨범 아티스트", albumArtistText, { albumArtistText = it }, mAlbumArtist)
 
                 // 연도: 숫자만 입력, 점은 자동
                 OutlinedTextField(
@@ -877,283 +896,4 @@ private fun EditField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
     )
-}
-
-// ----------------------------------------------------------------------
-// 아티스트 입력칸: 이름 사이를 " / " 로 자동 정리
-//  - 띄어쓰기(또는 /)를 치면 " / " 가 들어간다.   A + 스페이스 -> "A / "
-//  - 한 번 붙여넣고 또 붙여넣으면 앞뒤가 자동으로 나뉜다.   "A" 에 "B" 붙여넣기 -> "A / B"
-//  - 지울 때: "A / " 에서 백스페이스를 한 번 누르면 "A" 가 된다.
-// 아티스트 이름 안에 띄어쓰기가 없다는 전제이므로, 이 칸에서 띄어쓰기는 이름 구분으로 취급한다.
-// 처음부터 들어 있던 값은 사용자가 건드리기 전에는 그대로 둔다.
-// ----------------------------------------------------------------------
-
-private fun isSepChar(c: Char): Boolean = c.isWhitespace() || c == '/'
-
-/** 바뀐 입력을 정리한다. 반환: (새 글, 커서 위치). null 이면 손대지 않고 그대로 통과. */
-private fun reformatArtist(old: String, new: String, cursor: Int, composing: Boolean, clip: () -> String?): Pair<String, Int>? {
-    // 이전 글과 새 글을 비교해 "지워진 부분"과 "들어온 부분"을 찾는다
-    var p = 0
-    val maxP = minOf(old.length, new.length)
-    while (p < maxP && old[p] == new[p]) p++
-    var s = 0
-    val maxS = minOf(old.length, new.length) - p
-    while (s < maxS && old[old.length - 1 - s] == new[new.length - 1 - s]) s++
-    val removed = old.substring(p, old.length - s)
-    val inserted = new.substring(p, new.length - s)
-    val deleting = new.length < old.length
-
-    // 붙여넣기 판단:
-    //  (1) 글자 조합 중이 아닐 때 2글자 이상이 한꺼번에 들어왔거나(= 붙여넣기),
-    //  (2) 선택한 글자를 바꿔 넣는 경우엔 클립보드 내용과 같을 때
-    val ins = inserted.trim()
-    val bigInsert = !composing && removed.isEmpty() && ins.length >= 2
-    val isPaste = bigInsert || (ins.length >= 2 && ins == (clip()?.trim() ?: ""))
-
-    // 띄어쓰기/슬래시가 오가지도 않고 붙여넣기도 아니면 (일반 글자 입력) 손대지 않는다 (한글 조합 보호)
-    if (!isPaste && !inserted.any { isSepChar(it) } && !removed.any { isSepChar(it) }) return null
-
-    var raw = new
-    var cur = cursor.coerceIn(0, new.length)
-    if (isPaste) {
-        val l = new.substring(0, p)
-        val r = new.substring(new.length - s)
-        val pre = if (l.isNotEmpty() && !isSepChar(l.last())) " " else ""
-        val post = if (r.isNotEmpty() && !isSepChar(r.first())) " " else ""
-        raw = l + pre + inserted + post + r
-        cur = l.length + pre.length + inserted.length
-    }
-
-    // 이름 조각으로 나눠서 " / " 로 다시 잇는다
-    // "성우" 같은 역할 단어는 ArtistCleaner 로 빼서 이름에 남기지 않는다
-    val tokens = ArrayList<String>()
-    val sb = StringBuilder()
-    for (ch in raw) {
-        if (isSepChar(ch)) {
-            if (sb.isNotEmpty()) {
-                val t = ArtistCleaner.cleanToken(sb.toString())
-                if (t.isNotEmpty()) tokens.add(t)
-                sb.setLength(0)
-            }
-        } else {
-            sb.append(ch)
-        }
-    }
-    if (sb.isNotEmpty()) {
-        val t = ArtistCleaner.cleanToken(sb.toString())
-        if (t.isNotEmpty()) tokens.add(t)
-    }
-    var text = tokens.joinToString(" / ")
-    // 끝에서 띄어쓰기를 쳤으면 다음 이름을 위해 " / " 를 붙여 둔다 (지우는 중에는 붙이지 않음)
-    if (!deleting && tokens.isNotEmpty() && isSepChar(raw.last())) text += " / "
-
-    // 커서: "이름 글자 몇 개 뒤"였는지를 새 글에서 찾는다
-    var k = 0
-    for (i in 0 until cur) if (!isSepChar(raw[i])) k++
-    var pos = 0
-    if (k > 0) {
-        var cnt = 0
-        pos = text.length
-        for (i in text.indices) {
-            if (!isSepChar(text[i])) {
-                cnt++
-                if (cnt == k) {
-                    pos = i + 1
-                    break
-                }
-            }
-        }
-    }
-    if (cur >= raw.length) {
-        pos = text.length
-    } else if (k > 0 && cur > 0 && isSepChar(raw[cur - 1]) && text.startsWith(" / ", pos)) {
-        pos += 3
-    }
-    return text to pos
-}
-
-@Composable
-private fun ArtistField(
-    label: String,
-    value: String,
-    onChange: (String) -> Unit,
-    mixed: Boolean = false
-) {
-    val clipboard = LocalClipboardManager.current
-    var tfv by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
-
-    // 바깥에서 값이 바뀌면(예: 버튼으로 채움) 따라간다
-    LaunchedEffect(value) {
-        if (tfv.text != value) tfv = TextFieldValue(value, TextRange(value.length))
-    }
-
-    OutlinedTextField(
-        value = tfv,
-        onValueChange = { nv ->
-            val r = if (nv.text == tfv.text) null
-            else reformatArtist(tfv.text, nv.text, nv.selection.end, nv.composition != null) { clipboard.getText()?.text }
-            if (r == null) {
-                tfv = nv
-                onChange(nv.text)
-            } else {
-                tfv = TextFieldValue(r.first, TextRange(r.second))
-                onChange(r.first)
-            }
-        },
-        label = { Text(label) },
-        placeholder = { if (mixed) Text("여러 값 · 그대로 두면 변경 안 함") },
-        singleLine = true,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp)
-            .onFocusChanged { f ->
-                // 칸을 벗어날 때 끝에 남은 " / " 는 지운다
-                if (!f.isFocused) {
-                    val t = tfv.text
-                    val c = t.trimEnd { isSepChar(it) }
-                    if (c != t) {
-                        tfv = TextFieldValue(c, TextRange(c.length))
-                        onChange(c)
-                    }
-                }
-            }
-    )
-}
-
-// ----------------------------------------------------------------------
-// 앨범 아티스트 추천
-// ----------------------------------------------------------------------
-
-/**
- * 이 기기의 모든 음악 파일에 적힌 "앨범 아티스트" 태그 모음 (안드로이드 미디어 DB에서 읽음 · 파일을 열지 않아 빠름).
- * 많이 쓰인 것이 앞에 온다. 안드로이드 11 미만에서는 미디어 DB에 이 정보가 없어 빈 목록이다.
- */
-object AlbumArtistIndex {
-    @Volatile
-    var names: List<String> = emptyList()
-
-    fun load(context: android.content.Context): List<String> {
-        if (android.os.Build.VERSION.SDK_INT < 30) return names
-        val counts = HashMap<String, Int>()
-        try {
-            val col = android.provider.MediaStore.Audio.AudioColumns.ALBUM_ARTIST
-            context.contentResolver.query(
-                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(col),
-                "$col IS NOT NULL AND $col != ''",
-                null,
-                null
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val v = (c.getString(0) ?: "").trim()
-                    if (v.isEmpty() || v == "<unknown>") continue
-                    counts[v] = (counts[v] ?: 0) + 1
-                }
-            }
-        } catch (e: Exception) {
-            return names
-        }
-        // "A / B" 처럼 여러 명이면 한 명씩도 후보로 (한 명 쪽에 개수를 더해 준다)
-        val merged = HashMap<String, Int>(counts)
-        for ((full, n) in counts) {
-            if (" / " in full) {
-                for (part in full.split(" / ")) {
-                    val t = part.trim()
-                    if (t.isNotEmpty()) merged[t] = (merged[t] ?: 0) + n
-                }
-            }
-        }
-        names = merged.entries.sortedByDescending { it.value }.map { it.key }
-        return names
-    }
-}
-
-/** 목록에 있는 모든 앨범의 아티스트 이름 모음 (목록 화면이 갱신할 때마다 채운다) */
-object ArtistIndex {
-    @Volatile
-    var names: List<String> = emptyList()
-
-    fun update(albums: List<Album>) {
-        val set = LinkedHashSet<String>()
-        for (a in albums) {
-            val full = a.artist.trim()
-            if (full.isEmpty() || full == "알 수 없는 아티스트") continue
-            set.add(full)
-            for (n in full.split(" / ")) {
-                val t = n.trim()
-                if (t.isNotEmpty()) set.add(t)
-            }
-        }
-        names = set.toList()
-    }
-}
-
-/**
- * 추천 후보를 모은다. 우선순위:
- *  1) 지금 이 화면의 아티스트 칸  2) 이 앨범 곡들의 태그(아티스트/앨범 아티스트)  3) 목록 전체의 아티스트
- * 적은 글자로 시작하는 것을 먼저, 글자가 들어 있는 것을 그다음에 보여준다.
- */
-private fun suggestAlbumArtists(query: String, artistText: String, tags: AlbumTags, deviceAlbumArtists: List<String>): List<String> {
-    val pool = ArrayList<String>()
-    pool.addAll(deviceAlbumArtists)   // 이 기기의 다른 앨범들에 적힌 앨범 아티스트가 가장 먼저
-    fun addWithParts(v: String) {
-        val t = v.trim()
-        if (t.isEmpty()) return
-        pool.add(t)
-        for (n in t.split(" / ")) {
-            val x = n.trim()
-            if (x.isNotEmpty()) pool.add(x)
-        }
-    }
-    addWithParts(artistText)
-    addWithParts(tags.albumArtist.value)
-    addWithParts(tags.artist.value)
-    for (t in tags.perTrack.values) {
-        addWithParts(t.artist)
-        addWithParts(t.albumArtist)
-    }
-    pool.addAll(ArtistIndex.names)
-
-    val seen = HashSet<String>()
-    val starts = ArrayList<String>()
-    val contains = ArrayList<String>()
-    for (c in pool) {
-        if (c.equals(query, ignoreCase = true)) continue
-        if (!seen.add(c.lowercase())) continue
-        if (c.startsWith(query, ignoreCase = true)) starts.add(c)
-        else if (c.contains(query, ignoreCase = true)) contains.add(c)
-    }
-    return (starts + contains).take(6)
-}
-
-/** 입력칸 위에 작게 보여 주는 추천 줄. 누르면 그 값으로 입력된다. */
-@Composable
-private fun SuggestionRow(items: List<String>, onPick: (String) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp)
-            .horizontalScroll(rememberScrollState()),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            "추천 · 누르면 입력돼요",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        for (item in items) {
-            Text(
-                item,
-                fontSize = 12.sp,
-                maxLines = 1,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.secondaryContainer)
-                    .clickable { onPick(item) }
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            )
-        }
-    }
 }

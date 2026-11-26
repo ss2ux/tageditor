@@ -217,11 +217,9 @@ object NameCleaner {
 }
 
 /**
- * 아티스트/앨범 아티스트 칸용 정리.
+ * 아티스트 칸용 정리 (기존 동작).
  * "성우" 는 역할 표시라서 이름에 넣지 않는다.
- *  - 토큰이 "성우" 만이면 통째로 버림
- *  - "성우아티스트1" 처럼 붙어 있어도 "성우"만 빼고 "아티스트1" 로 남김
- *  - "성우 / 아티스트1 / 아티스트2" → "아티스트1 / 아티스트2"
+ * 여러 명은 공백·/ 로 나눠 " / " 로 다시 잇는다.
  */
 object ArtistCleaner {
     /** 이름 조각에서 빼 버릴 역할 단어 (필요하면 여기 추가) */
@@ -256,5 +254,17 @@ object ArtistCleaner {
         }
         flush()
         return tokens.joinToString(" / ")
+    }
+
+    /**
+     * 앨범 아티스트 전용: 중점 " · " 로만 여러 명을 나눈다.
+     * 이름 안의 '/' 나 공백은 한 이름의 일부로 둔다.
+     */
+    fun cleanAlbumArtist(s: String): String {
+        if (s.isEmpty()) return s
+        return s.split(Regex("\\s*·\\s*"))
+            .map { cleanToken(it) }
+            .filter { it.isNotEmpty() }
+            .joinToString(" · ")
     }
 }
