@@ -99,8 +99,9 @@ class TagRuleEngine(
     val hasRules: Boolean
 
     init {
-        for (r in rules) {
-            if (!r.enabled || r.find.isEmpty()) continue
+        // 꺼진 규칙은 여기서 아예 제외 (호출측 실수 방지)
+        for (r in rules.filter { it.enabled }) {
+            if (r.find.isEmpty()) continue
             if (r.regex) {
                 try {
                     regexRules.add(Regex(HangulClass.expand(r.find)) to r.replace)
@@ -248,21 +249,15 @@ object TagRules {
 
     /**
      * 똑같은 규칙(찾을 말·바꿀 말·정규식 여부)은 맨 앞 하나만 남긴다.
-     * 하나라도 켜져 있었으면 켜진 채로 남긴다. 반환: (정리된 목록, 제거된 개수)
+     * 켜짐/꺼짐은 맨 앞 항목 상태를 유지한다 (뒤에 있는 켠 복제 때문에 다시 켜지지 않음).
      */
     fun dedupe(list: List<TagRule>): Pair<List<TagRule>, Int> {
         data class Key(val f: String, val r: String, val x: Boolean)
-        val firstIdx = LinkedHashMap<Key, Int>()
+        val seen = HashSet<Key>()
         val out = ArrayList<TagRule>(list.size)
         for (r in list) {
             val k = Key(r.find, r.replace, r.regex)
-            val at = firstIdx[k]
-            if (at == null) {
-                firstIdx[k] = out.size
-                out.add(r)
-            } else if (r.enabled && !out[at].enabled) {
-                out[at] = out[at].copy(enabled = true)
-            }
+            if (seen.add(k)) out.add(r)
         }
         return out to (list.size - out.size)
     }
@@ -272,7 +267,8 @@ object TagRules {
      * 돌려주는 것: (바뀐 요청, 바뀐 내용 설명 목록). 바뀐 게 없으면 목록이 비어 있다.
      */
     fun applyTo(ctx: Context, req: EditRequest): Pair<EditRequest, List<String>> {
-        val engine = TagRuleEngine(load(ctx), fixJosa(ctx), protect(ctx))
+        val active = load(ctx).filter { it.enabled }
+        val engine = TagRuleEngine(active, fixJosa(ctx), protect(ctx))
         if (!engine.hasRules && protect(ctx).isEmpty()) return req to emptyList()
         val changes = ArrayList<String>()
         fun conv(label: String, v: String?): String? {
@@ -937,7 +933,12 @@ private fun TagRulesScreen(onClose: () -> Unit) {
                     Switch(
                         checked = r.enabled,
                         onCheckedChange = { on ->
-                            persist(rules.map { if (it.id == r.id) it.copy(enabled = on) else it })
+                            // 같은 내용의 복제 규칙이 있으면 함께 켜고 끔 (하나만 끄고 다른 복제가 적용되는 일 방지)
+                            persist(rules.map { row ->
+                                if (row.id == r.id ||
+                                    (row.find == r.find && row.replace == r.replace && row.regex == r.regex)
+                                ) row.copy(enabled = on) else row
+                            })
                         }
                     )
                 }
